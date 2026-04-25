@@ -85,13 +85,13 @@ let cfg = { ip: '', port: '', secret: '' };
 let allSessions = {};  // terminalId -> { ws, term, fitAddon, el, tabEl }
 let activeTerminalId = null;
 
-// Persist config in localStorage
-const DEFAULTS = { ip: '100.68.9.36', port: '46441', secret: '6bf839d5194987de7cae16489b83ba86485ed9018368e8c7d36480e9b5654e80' };
+// Always use DEFAULTS — port/secret change on every host-service restart
+const DEFAULTS = { ip: '100.68.9.36', port: '45731', secret: '5100b2745c02a7beb6423856f86b1ca33d0c118abf5be206a38623704afa312c' };
 window.onload = () => {
-  const saved = JSON.parse(localStorage.getItem('rc-cfg') || '{}');
-  document.getElementById('hostIp').value = saved.ip || DEFAULTS.ip;
-  document.getElementById('hostPort').value = saved.port || DEFAULTS.port;
-  document.getElementById('hostSecret').value = saved.secret || DEFAULTS.secret;
+  localStorage.removeItem('rc-cfg');
+  document.getElementById('hostIp').value = DEFAULTS.ip;
+  document.getElementById('hostPort').value = DEFAULTS.port;
+  document.getElementById('hostSecret').value = DEFAULTS.secret;
 };
 
 function saveConfig() {
@@ -104,8 +104,11 @@ function saveConfig() {
 function base() { return `http://${cfg.ip}:${cfg.port}`; }
 function wsBase() { return `ws://${cfg.ip}:${cfg.port}`; }
 
+// SuperJSON-wrapped tRPC batch helpers (host-service uses superjson transformer)
+function sj(input) { return { json: input }; }
+
 async function trpc(proc, input = {}) {
-  const qs = encodeURIComponent(JSON.stringify({ '0': input }));
+  const qs = encodeURIComponent(JSON.stringify({ '0': sj(input) }));
   const res = await fetch(`${base()}/trpc/${proc}?batch=1&input=${qs}`, {
     headers: { Authorization: `Bearer ${cfg.secret}` }
   });
@@ -115,13 +118,13 @@ async function trpc(proc, input = {}) {
 }
 
 async function trpcPost(proc, input = {}) {
-  const res = await fetch(`${base()}/trpc/${proc}`, {
+  const res = await fetch(`${base()}/trpc/${proc}?batch=1`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${cfg.secret}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ '0': input }),
+    body: JSON.stringify({ '0': sj(input) }),
   });
   const body = await res.json();
   if (body[0]?.error) throw new Error(body[0].error.json.message);
@@ -137,8 +140,8 @@ function setStatus(msg, type = '') {
 async function connect() {
   saveConfig();
   try {
-    const info = await trpc('host.info');
-    setStatus(`✓ ${info.hostName} (v${info.version})`, 'ok');
+    const data = await trpc('workspace.listAll');
+    setStatus(`✓ connected (${data.projects.length} projects)`, 'ok');
     await refresh();
   } catch (e) {
     setStatus(`✗ ${e.message}`, 'err');
@@ -186,7 +189,7 @@ function renderSidebar({ projects, workspaces }, sessions) {
     pDiv.appendChild(ph);
 
     for (const w of pWs) {
-      const wSessions = sessions.filter(s => s.workspaceId === w.id);
+      const wSessions = sessions.filter(s => w.worktreePath && s.cwd === w.worktreePath);
       const wDiv = document.createElement('div');
       wDiv.className = 'workspace';
 
@@ -211,7 +214,7 @@ function renderSidebar({ projects, workspaces }, sessions) {
         const newBtn = document.createElement('button');
         newBtn.className = 'new-term-btn';
         newBtn.textContent = '+ New terminal';
-        newBtn.onclick = () => openTerminal(w.id, w.worktreePath);
+        newBtn.onclick = () => openTerminal(w.worktreePath);
         termList.appendChild(newBtn);
       } else {
         const np = document.createElement('div');
@@ -227,9 +230,9 @@ function renderSidebar({ projects, workspaces }, sessions) {
   }
 }
 
-async function openTerminal(workspaceId, worktreePath) {
+async function openTerminal(worktreePath) {
   try {
-    const result = await trpcPost('terminal.open', { workspaceId, worktreePath });
+    const result = await trpcPost('terminal.open', { worktreePath });
     await attachTerminal(result.terminalId);
     await refresh();
   } catch (e) {

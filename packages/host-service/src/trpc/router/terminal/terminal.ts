@@ -19,7 +19,7 @@ export const terminalRouter = router({
 	open: protectedProcedure
 		.input(
 			z.object({
-				workspaceId: z.string(),
+				workspaceId: z.string().optional(),
 				worktreePath: z.string(),
 				themeType: z.string().optional(),
 			}),
@@ -28,7 +28,7 @@ export const terminalRouter = router({
 			const terminalId = randomBytes(8).toString("hex");
 			const result = createTerminalSessionInternal({
 				terminalId,
-				workspaceId: input.workspaceId,
+				workspaceId: input.workspaceId ?? null,
 				worktreePath: input.worktreePath,
 				themeType: parseThemeType(input.themeType),
 				db: ctx.db,

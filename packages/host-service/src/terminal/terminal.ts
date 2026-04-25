@@ -88,7 +88,8 @@ type ShellReadyState = "pending" | "ready" | "timed_out" | "unsupported";
 
 interface TerminalSession {
 	terminalId: string;
-	workspaceId: string;
+	workspaceId: string | null;
+	cwd: string;
 	pty: IPty;
 	sockets: Set<TerminalSocket>;
 	buffer: string[];
@@ -127,7 +128,8 @@ function pruneAndCountOpenSockets(session: TerminalSession): number {
 
 export interface TerminalSessionSummary {
 	terminalId: string;
-	workspaceId: string;
+	workspaceId: string | null;
+	cwd: string;
 	createdAt: number;
 	exited: boolean;
 	exitCode: number;
@@ -150,6 +152,7 @@ export function listTerminalSessions(
 		.map((session) => ({
 			terminalId: session.terminalId,
 			workspaceId: session.workspaceId,
+			cwd: session.cwd,
 			createdAt: session.createdAt,
 			exited: session.exited,
 			exitCode: session.exitCode,
@@ -301,7 +304,7 @@ export function disposeSessionsByWorkspaceId(
 
 interface CreateTerminalSessionOptions {
 	terminalId: string;
-	workspaceId: string;
+	workspaceId?: string | null;
 	themeType?: "dark" | "light";
 	db: HostDb;
 	eventBus?: EventBus;
@@ -369,7 +372,7 @@ export function createTerminalSessionInternal({
 		themeType,
 		cwd,
 		terminalId,
-		workspaceId,
+		workspaceId: workspaceId ?? "",
 		workspacePath: cwd,
 		rootPath,
 		hostServiceVersion: process.env.HOST_SERVICE_VERSION || "unknown",
@@ -401,7 +404,7 @@ export function createTerminalSessionInternal({
 	db.insert(terminalSessions)
 		.values({
 			id: terminalId,
-			originWorkspaceId: workspaceId,
+			originWorkspaceId: workspaceId ?? null,
 			status: "active",
 			createdAt,
 		})
@@ -424,7 +427,8 @@ export function createTerminalSessionInternal({
 
 	const session: TerminalSession = {
 		terminalId,
-		workspaceId,
+		workspaceId: workspaceId ?? null,
+		cwd,
 		pty,
 		sockets: new Set(),
 		buffer: [],
