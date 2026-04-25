@@ -1,4 +1,30 @@
+import { authClient } from "../auth/client";
 import { env } from "../env";
+
+/**
+ * Fetch a short-lived JWT from the API's better-auth JWT plugin endpoint.
+ *
+ * The better-auth `jwt` plugin exposes GET /api/auth/token which exchanges a
+ * valid session (cookie or Bearer token) for a signed RS256 JWT.  The relay
+ * verifies tokens against the same JWKS endpoint, so this JWT is accepted
+ * directly — raw session cookies are NOT accepted by the relay.
+ *
+ * @throws {Error} if the session is missing or the API call fails.
+ */
+export async function getRelayJwt(): Promise<string> {
+  const cookies = authClient.getCookie();
+  const res = await fetch(`${env.EXPO_PUBLIC_API_URL}/api/auth/token`, {
+    headers: cookies ? { Cookie: cookies } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch relay JWT: ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as { token: string };
+  if (!data.token) {
+    throw new Error("Relay JWT response missing token field");
+  }
+  return data.token;
+}
 
 /**
  * Build the WebSocket URL to attach to a terminal session via the relay.

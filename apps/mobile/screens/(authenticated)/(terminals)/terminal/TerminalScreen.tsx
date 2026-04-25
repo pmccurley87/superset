@@ -1,12 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronLeft } from "lucide-react-native";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
-import { authClient } from "@/lib/auth/client";
-import { buildTerminalWsUrl } from "@/lib/terminal/relay";
+import { buildTerminalWsUrl, getRelayJwt } from "@/lib/terminal/relay";
 import type { ConnectionState } from "@/lib/terminal/types";
 import { TerminalWebView } from "../components/TerminalWebView";
 import { ConnectionStatusBar } from "../components/ConnectionStatusBar";
@@ -20,16 +19,25 @@ export function TerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
+  const [wsUrl, setWsUrl] = useState<string | null>(null);
 
-  // Build WebSocket URL with auth token
-  // Note: In production, this should fetch a JWT from the API's token endpoint.
-  // For now, use the session cookie to get a token.
-  const wsUrl = useMemo(() => {
-    if (!hostId || !sessionId) return null;
-    const cookies = authClient.getCookie();
-    if (!cookies) return null;
-    // The relay accepts the session token directly for WebSocket auth
-    return buildTerminalWsUrl(hostId, sessionId, cookies);
+  // Fetch a relay JWT and derive the WebSocket URL.
+  // The relay verifies tokens via JWKS — raw session cookies are not accepted.
+  useEffect(() => {
+    if (!hostId || !sessionId) return;
+    let cancelled = false;
+    getRelayJwt()
+      .then((jwt) => {
+        if (!cancelled) {
+          setWsUrl(buildTerminalWsUrl(hostId, sessionId, jwt));
+        }
+      })
+      .catch((err) => {
+        console.error("[TerminalScreen] Failed to fetch relay JWT:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [hostId, sessionId]);
 
   const handleExit = useCallback((_exitCode: number, _signal: number) => {

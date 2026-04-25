@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import SuperJSON from "superjson";
-import { authClient } from "@/lib/auth/client";
-import { buildRelayTrpcUrl } from "@/lib/terminal/relay";
+import { buildRelayTrpcUrl, getRelayJwt } from "@/lib/terminal/relay";
 
 interface TerminalSessionSummary {
   terminalId: string;
@@ -11,12 +10,7 @@ interface TerminalSessionSummary {
 }
 
 async function fetchSessions(hostId: string, workspaceId?: string): Promise<TerminalSessionSummary[]> {
-  const cookies = authClient.getCookie();
-  const tokenRes = await fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/token`, {
-    headers: cookies ? { Cookie: cookies } : {},
-  });
-  if (!tokenRes.ok) throw new Error("Failed to get auth token");
-  const { token: jwt } = await tokenRes.json() as { token: string };
+  const jwt = await getRelayJwt();
 
   const input = workspaceId ? { workspaceId } : {};
   const url = buildRelayTrpcUrl(hostId, "terminal.listSessions");
