@@ -3,52 +3,32 @@ import { RefreshControl, ScrollView, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Text } from "@/components/ui/text";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { HostList } from "./components/HostList";
+import { isHostConfigured } from "@/lib/terminal/host";
 import { SessionList } from "./components/SessionList";
-import { useHosts } from "./hooks/useHosts";
 import { useTerminalSessions } from "./hooks/useTerminalSessions";
-
-interface Host {
-  id: string;
-  name: string;
-  machineId: string;
-  isOnline: boolean;
-}
 
 export function TerminalsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [selectedHost, setSelectedHost] = useState<Host | null>(null);
-  const { data: hostsData, isLoading: hostsLoading, refetch: refetchHosts } = useHosts();
-  const { data: sessions, isLoading: sessionsLoading, refetch: refetchSessions } = useTerminalSessions(
-    selectedHost?.id ?? null,
-  );
+  const configured = isHostConfigured();
+  const { data: sessions, isLoading, refetch } = useTerminalSessions();
 
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    if (selectedHost) {
-      await refetchSessions();
-    } else {
-      await refetchHosts();
-    }
+    await refetch();
     setRefreshing(false);
-  }, [selectedHost, refetchHosts, refetchSessions]);
+  }, [refetch]);
 
   const handleSelectSession = useCallback(
     (session: { terminalId: string }) => {
-      if (!selectedHost) return;
       router.push({
         pathname: "/(authenticated)/(terminals)/terminal/[sessionId]",
-        params: {
-          sessionId: session.terminalId,
-          hostId: selectedHost.id,
-          hostName: selectedHost.name,
-        },
+        params: { sessionId: session.terminalId },
       });
     },
-    [selectedHost, router],
+    [router],
   );
 
   return (
@@ -60,26 +40,26 @@ export function TerminalsScreen() {
       <View className="px-6 gap-4">
         <Text className="text-2xl font-bold text-foreground">Terminals</Text>
 
-        {!selectedHost ? (
-          hostsLoading ? (
-            <Text className="text-muted-foreground">Loading hosts...</Text>
-          ) : (
-            <HostList
-              hosts={hostsData?.hosts ?? []}
-              onSelectHost={setSelectedHost}
-            />
-          )
+        {!configured ? (
+          <View className="items-center justify-center py-20 gap-3">
+            <Text className="text-center text-muted-foreground">
+              Not connected to a host.
+            </Text>
+            <Text className="text-center text-sm text-muted-foreground">
+              Set EXPO_PUBLIC_HOST_IP, EXPO_PUBLIC_HOST_PORT, and
+              EXPO_PUBLIC_HOST_SECRET to your desktop's Tailscale IP, host-service
+              port, and PSK.
+            </Text>
+          </View>
+        ) : isLoading ? (
+          <Text className="text-muted-foreground">Loading sessions...</Text>
         ) : (
-          sessionsLoading ? (
-            <Text className="text-muted-foreground">Loading sessions...</Text>
-          ) : (
-            <SessionList
-              sessions={sessions ?? []}
-              onSelectSession={handleSelectSession}
-              onBack={() => setSelectedHost(null)}
-              hostName={selectedHost.name}
-            />
-          )
+          <SessionList
+            sessions={sessions ?? []}
+            onSelectSession={handleSelectSession}
+            onBack={() => {}}
+            hostName="Desktop"
+          />
         )}
       </View>
     </ScrollView>

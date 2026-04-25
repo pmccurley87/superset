@@ -51,7 +51,7 @@ async function main(): Promise<void> {
 
 	const startedAt = Date.now();
 	const server = serve(
-		{ fetch: app.fetch, port: env.HOST_SERVICE_PORT, hostname: "127.0.0.1" },
+		{ fetch: app.fetch, port: env.HOST_SERVICE_PORT, hostname: "0.0.0.0" },
 		(info: { port: number }) => {
 			if (env.ORGANIZATION_ID) {
 				try {

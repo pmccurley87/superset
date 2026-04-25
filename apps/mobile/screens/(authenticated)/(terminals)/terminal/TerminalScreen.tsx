@@ -1,44 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronLeft } from "lucide-react-native";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
-import { buildTerminalWsUrl, getRelayJwt } from "@/lib/terminal/relay";
+import { buildTerminalWsUrl } from "@/lib/terminal/host";
 import type { ConnectionState } from "@/lib/terminal/types";
 import { TerminalWebView } from "../components/TerminalWebView";
 import { ConnectionStatusBar } from "../components/ConnectionStatusBar";
 
 export function TerminalScreen() {
-  const { sessionId, hostId, hostName } = useLocalSearchParams<{
-    sessionId: string;
-    hostId: string;
-    hostName: string;
-  }>();
+  const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
 
-  // Fetch a relay JWT and derive the WebSocket URL.
-  // The relay verifies tokens via JWKS — raw session cookies are not accepted.
-  useEffect(() => {
-    if (!hostId || !sessionId) return;
-    let cancelled = false;
-    getRelayJwt()
-      .then((jwt) => {
-        if (!cancelled) {
-          setWsUrl(buildTerminalWsUrl(hostId, sessionId, jwt));
-        }
-      })
-      .catch((err) => {
-        console.error("[TerminalScreen] Failed to fetch relay JWT:", err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hostId, sessionId]);
+  const wsUrl = useMemo(() => {
+    if (!sessionId) return null;
+    return buildTerminalWsUrl(sessionId);
+  }, [sessionId]);
 
   const handleExit = useCallback((_exitCode: number, _signal: number) => {
     // Terminal exited — could show a "session ended" overlay
@@ -52,12 +33,12 @@ export function TerminalScreen() {
           <Icon as={ChevronLeft} className="text-white size-5" />
         </Pressable>
         <Text className="text-white font-medium flex-1" numberOfLines={1}>
-          {hostName ?? "Terminal"} — {sessionId?.slice(0, 8)}
+          Terminal — {sessionId?.slice(0, 8)}
         </Text>
       </View>
 
       {/* Connection status */}
-      <ConnectionStatusBar state={connectionState} hostName={hostName} />
+      <ConnectionStatusBar state={connectionState} />
 
       {/* Terminal */}
       <TerminalWebView
