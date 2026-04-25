@@ -80,7 +80,7 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 	app.use(
 		"*",
 		cors({
-			origin: config.allowedOrigins.length > 0 ? config.allowedOrigins : (origin) => origin,
+			origin: config.allowedOrigins.length > 0 ? config.allowedOrigins : "*",
 			allowHeaders: ["Content-Type", "Authorization", "trpc-accept"],
 		}),
 	);

@@ -86,7 +86,7 @@ let allSessions = {};  // terminalId -> { ws, term, fitAddon, el, tabEl }
 let activeTerminalId = null;
 
 // Persist config in localStorage
-const DEFAULTS = { ip: '100.68.9.36', port: '45273', secret: '56889fa71f364972aae9d4add81f5fc8f3f11b2fba9b23a4028d85da819d4fc6' };
+const DEFAULTS = { ip: '100.68.9.36', port: '46441', secret: '6bf839d5194987de7cae16489b83ba86485ed9018368e8c7d36480e9b5654e80' };
 window.onload = () => {
   const saved = JSON.parse(localStorage.getItem('rc-cfg') || '{}');
   document.getElementById('hostIp').value = saved.ip || DEFAULTS.ip;
