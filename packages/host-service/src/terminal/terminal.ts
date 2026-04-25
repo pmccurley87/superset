@@ -370,7 +370,7 @@ export function createTerminalSessionInternal({
 		cwd,
 		terminalId,
 		workspaceId,
-		workspacePath: workspace.worktreePath,
+		workspacePath: cwd,
 		rootPath,
 		hostServiceVersion: process.env.HOST_SERVICE_VERSION || "unknown",
 		supersetEnv:
