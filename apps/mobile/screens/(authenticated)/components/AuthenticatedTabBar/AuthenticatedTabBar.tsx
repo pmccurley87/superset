@@ -9,10 +9,11 @@ import { useOrganizations } from "@/screens/(authenticated)/hooks/useOrganizatio
 const TABS: TabItem[] = [
 	{ name: "(home)", icon: "house.fill", label: "Home" },
 	{ name: "(tasks)", icon: "checkmark.square.fill", label: "Tasks" },
+	{ name: "(terminals)", icon: "terminal.fill", label: "Terminals" },
 	{ name: "__menu__", icon: "ellipsis", label: "More", isMenuTrigger: true },
 ];
 
-const NAVIGABLE_TAB_NAMES = ["(home)", "(tasks)"];
+const NAVIGABLE_TAB_NAMES = ["(home)", "(tasks)", "(terminals)"];
 
 const MENU_ACTIONS = [
 	{ name: "views", icon: "square.stack", label: "Views" },

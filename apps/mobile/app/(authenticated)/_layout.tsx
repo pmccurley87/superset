@@ -13,6 +13,7 @@ export default function AuthenticatedLayout() {
 				<TabList style={{ display: "none" }}>
 					<TabTrigger name="(home)" href="/(home)" />
 					<TabTrigger name="(tasks)" href="/(tasks)" />
+					<TabTrigger name="(terminals)" href="/(terminals)" />
 					<TabTrigger name="(more)" href="/(more)" />
 				</TabList>
 				<AuthenticatedTabBar />
