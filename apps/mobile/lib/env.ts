@@ -5,7 +5,7 @@ const envSchema = z.object({
 		.enum(["development", "production", "test"])
 		.default("development"),
 	EXPO_PUBLIC_API_URL: z.url(),
-	EXPO_PUBLIC_RELAY_URL: z.url(),
+	EXPO_PUBLIC_RELAY_URL: z.url().optional(),
 	EXPO_PUBLIC_WEB_URL: z.url().optional(),
 	EXPO_PUBLIC_DEEP_LINK_SCHEME: z.string().default("superset"),
 	EXPO_PUBLIC_DEEP_LINK_DOMAIN: z.string().optional(),

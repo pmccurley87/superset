@@ -27,7 +27,8 @@ export function TerminalWebView({ wsUrl, onConnectionStateChange, onExit }: Term
 
   const postToWebView = useCallback((type: string, data: string) => {
     const msg = JSON.stringify({ type, data });
-    webViewRef.current?.postMessage(msg);
+    const escaped = msg.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    webViewRef.current?.injectJavaScript(`window.postMessage('${escaped}', '*'); true;`);
   }, []);
 
   // Connect/disconnect when wsUrl changes

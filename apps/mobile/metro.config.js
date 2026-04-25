@@ -19,6 +19,9 @@ config.resolver.nodeModulesPaths = [
 // Enable package exports for better-auth
 config.resolver.unstable_enablePackageExports = true;
 
+// Allow Metro to bundle .html assets (e.g. xterm.html for the terminal WebView)
+config.resolver.assetExts.push("html");
+
 // Resolve local Expo Modules (modules/ dir)
 config.resolver.extraNodeModules = {
 	"@superset/tab-bar": path.resolve(projectRoot, "modules/tab-bar"),

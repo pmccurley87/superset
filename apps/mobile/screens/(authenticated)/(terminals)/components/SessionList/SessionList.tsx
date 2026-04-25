@@ -28,7 +28,7 @@ export function SessionList({ sessions, onSelectSession, onBack, hostName }: Ses
   return (
     <View className="gap-3">
       <Pressable onPress={onBack}>
-        <Text className="text-sm text-primary">&larr; Back to hosts</Text>
+        <Text className="text-sm text-primary">{"\u2190"} Back to hosts</Text>
       </Pressable>
       <Text className="text-lg font-bold text-foreground">{hostName}</Text>
 
