@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+    #terminal { width: 100%; height: 100%; }
+    .xterm { padding: 4px; }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script>
+    const term = new Terminal({
+      fontSize: 13,
+      fontFamily: "monospace",
+      cursorBlink: true,
+      theme: {
+        background: "#1a1a2e",
+        foreground: "#e0e0e0",
+        cursor: "#e0e0e0",
+        selectionBackground: "rgba(255,255,255,0.2)",
+      },
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+    term.open(document.getElementById("terminal"));
+    fitAddon.fit();
+
+    // Send user input to React Native
+    term.onData(function(data) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: "input", data: data }));
+    });
+
+    // Send resize events to React Native
+    term.onResize(function(size) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: "resize",
+        cols: size.cols,
+        rows: size.rows,
+      }));
+    });
+
+    // Report initial size
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: "resize",
+      cols: term.cols,
+      rows: term.rows,
+    }));
+
+    // Receive messages from React Native
+    window.addEventListener("message", function(event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch(e) { return; }
+
+      if (msg.type === "write") {
+        term.write(msg.data);
+      } else if (msg.type === "clear") {
+        term.clear();
+      } else if (msg.type === "fit") {
+        fitAddon.fit();
+      }
+    });
+
+    // Also handle document message for Android
+    document.addEventListener("message", function(event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch(e) { return; }
+
+      if (msg.type === "write") {
+        term.write(msg.data);
+      } else if (msg.type === "clear") {
+        term.clear();
+      } else if (msg.type === "fit") {
+        fitAddon.fit();
+      }
+    });
+
+    // Refit on window resize
+    window.addEventListener("resize", function() {
+      fitAddon.fit();
+    });
+  </script>
+</body>
+</html>
