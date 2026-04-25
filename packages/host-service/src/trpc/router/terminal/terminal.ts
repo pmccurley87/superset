@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -11,6 +12,36 @@ import {
 import { protectedProcedure, router } from "../../index";
 
 export const terminalRouter = router({
+	listAll: protectedProcedure.query(() => ({
+		sessions: listTerminalSessions({ includeExited: false }),
+	})),
+
+	open: protectedProcedure
+		.input(
+			z.object({
+				workspaceId: z.string(),
+				worktreePath: z.string(),
+				themeType: z.string().optional(),
+			}),
+		)
+		.mutation(({ ctx, input }) => {
+			const terminalId = randomBytes(8).toString("hex");
+			const result = createTerminalSessionInternal({
+				terminalId,
+				workspaceId: input.workspaceId,
+				worktreePath: input.worktreePath,
+				themeType: parseThemeType(input.themeType),
+				db: ctx.db,
+				eventBus: ctx.eventBus,
+			});
+
+			if ("error" in result) {
+				return { terminalId, status: "error" as const, error: result.error };
+			}
+
+			return { terminalId: result.terminalId, status: "active" as const };
+		}),
+
 	ensureSession: protectedProcedure
 		.input(
 			z.object({

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Superset Remote Control</title>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/lib/xterm.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.8.0/lib/addon-fit.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d0d0d; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+
+  #config { display: flex; gap: 8px; align-items: center; padding: 10px 14px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; flex-shrink: 0; }
+  #config input { background: #2a2a2a; border: 1px solid #3a3a3a; color: #e0e0e0; padding: 5px 9px; border-radius: 5px; font-size: 13px; }
+  #config input[type=text] { width: 160px; }
+  #config input[type=number] { width: 80px; }
+  #config input[type=password] { width: 320px; }
+  #config button { background: #3b82f6; color: #fff; border: none; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+  #config button:hover { background: #2563eb; }
+  #status { margin-left: auto; font-size: 12px; color: #888; }
+  #status.ok { color: #22c55e; }
+  #status.err { color: #ef4444; }
+
+  #main { display: flex; flex: 1; overflow: hidden; }
+
+  #sidebar { width: 300px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid #2a2a2a; background: #111; }
+  .project { border-bottom: 1px solid #1e1e1e; }
+  .project-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13px; font-weight: 600; color: #ccc; cursor: pointer; user-select: none; }
+  .project-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .project-header:hover { background: #1a1a1a; }
+  .workspace { padding: 6px 12px 6px 28px; font-size: 12px; border-bottom: 1px solid #181818; }
+  .workspace-name { color: #aaa; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .workspace-branch { color: #555; font-size: 11px; margin-bottom: 6px; }
+  .terminals { display: flex; flex-direction: column; gap: 3px; }
+  .terminal-btn { background: #1e1e1e; border: 1px solid #2a2a2a; color: #7dd3fc; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: left; display: flex; justify-content: space-between; align-items: center; }
+  .terminal-btn:hover { background: #253545; border-color: #3b82f6; }
+  .terminal-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+  .terminal-btn .age { color: #555; font-size: 10px; }
+  .new-term-btn { background: transparent; border: 1px dashed #2a2a2a; color: #555; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; text-align: left; margin-top: 2px; }
+  .new-term-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+  .no-path { color: #444; font-size: 11px; font-style: italic; }
+
+  #terminal-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #terminal-tabs { display: flex; gap: 0; background: #161616; border-bottom: 1px solid #2a2a2a; flex-shrink: 0; overflow-x: auto; }
+  .tab { padding: 6px 14px; font-size: 12px; cursor: pointer; border-right: 1px solid #2a2a2a; color: #888; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+  .tab:hover { background: #1e1e1e; color: #ccc; }
+  .tab.active { background: #1a1a1a; color: #e0e0e0; border-bottom: 2px solid #3b82f6; }
+  .tab .close { color: #555; font-size: 11px; cursor: pointer; }
+  .tab .close:hover { color: #ef4444; }
+  #terminal-container { flex: 1; overflow: hidden; position: relative; background: #000; }
+  .xterm-instance { position: absolute; inset: 0; padding: 6px; display: none; }
+  .xterm-instance.active { display: block; }
+  #empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #333; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div id="config">
+  <label style="font-size:12px;color:#666">HOST IP</label>
+  <input type="text" id="hostIp" placeholder="100.68.9.36">
+  <label style="font-size:12px;color:#666">PORT</label>
+  <input type="number" id="hostPort" placeholder="37319">
+  <label style="font-size:12px;color:#666">SECRET</label>
+  <input type="password" id="hostSecret" placeholder="PSK from host-service">
+  <button onclick="connect()">Connect</button>
+  <button onclick="refresh()" style="background:#374151">↺ Refresh</button>
+  <span id="status">not connected</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <div style="padding:10px 12px;font-size:11px;color:#444;border-bottom:1px solid #1e1e1e">PROJECTS & WORKSPACES</div>
+  </div>
+  <div id="terminal-area">
+    <div id="terminal-tabs"></div>
+    <div id="terminal-container">
+      <div id="empty-state">← Select or open a terminal</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let cfg = { ip: '', port: '', secret: '' };
+let allSessions = {};  // terminalId -> { ws, term, fitAddon, el, tabEl }
+let activeTerminalId = null;
+
+// Persist config in localStorage
+window.onload = () => {
+  const saved = JSON.parse(localStorage.getItem('rc-cfg') || '{}');
+  if (saved.ip) document.getElementById('hostIp').value = saved.ip;
+  if (saved.port) document.getElementById('hostPort').value = saved.port;
+  if (saved.secret) document.getElementById('hostSecret').value = saved.secret;
+};
+
+function saveConfig() {
+  cfg.ip = document.getElementById('hostIp').value.trim();
+  cfg.port = document.getElementById('hostPort').value.trim();
+  cfg.secret = document.getElementById('hostSecret').value.trim();
+  localStorage.setItem('rc-cfg', JSON.stringify(cfg));
+}
+
+function base() { return `http://${cfg.ip}:${cfg.port}`; }
+function wsBase() { return `ws://${cfg.ip}:${cfg.port}`; }
+
+async function trpc(proc, input = {}) {
+  const qs = encodeURIComponent(JSON.stringify({ '0': input }));
+  const res = await fetch(`${base()}/trpc/${proc}?batch=1&input=${qs}`, {
+    headers: { Authorization: `Bearer ${cfg.secret}` }
+  });
+  const body = await res.json();
+  if (body[0]?.error) throw new Error(body[0].error.json.message);
+  return body[0].result.data.json;
+}
+
+async function trpcPost(proc, input = {}) {
+  const res = await fetch(`${base()}/trpc/${proc}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.secret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ '0': input }),
+  });
+  const body = await res.json();
+  if (body[0]?.error) throw new Error(body[0].error.json.message);
+  return body[0].result.data.json;
+}
+
+function setStatus(msg, type = '') {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = type;
+}
+
+async function connect() {
+  saveConfig();
+  try {
+    const info = await trpc('host.info');
+    setStatus(`✓ ${info.hostName} (v${info.version})`, 'ok');
+    await refresh();
+  } catch (e) {
+    setStatus(`✗ ${e.message}`, 'err');
+  }
+}
+
+async function refresh() {
+  saveConfig();
+  const [workspaceData, sessionData] = await Promise.all([
+    trpc('workspace.listAll').catch(() => ({ projects: [], workspaces: [] })),
+    trpc('terminal.listAll').catch(() => ({ sessions: [] })),
+  ]);
+  renderSidebar(workspaceData, sessionData.sessions || []);
+}
+
+function timeAgo(ms) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  return `${Math.floor(s/3600)}h`;
+}
+
+function renderSidebar({ projects, workspaces }, sessions) {
+  const byProject = {};
+  for (const w of workspaces) {
+    if (!byProject[w.projectId]) byProject[w.projectId] = [];
+    byProject[w.projectId].push(w);
+  }
+
+  const sidebar = document.getElementById('sidebar');
+  const header = sidebar.firstElementChild;
+  sidebar.innerHTML = '';
+  sidebar.appendChild(header);
+
+  for (const p of projects) {
+    const pWs = byProject[p.id] || [];
+    if (!pWs.length) continue;
+
+    const pDiv = document.createElement('div');
+    pDiv.className = 'project';
+
+    const ph = document.createElement('div');
+    ph.className = 'project-header';
+    ph.innerHTML = `<span class="project-dot" style="background:${p.color || '#3b82f6'}"></span>${p.name} <span style="color:#444;font-weight:400;font-size:11px">(${pWs.length})</span>`;
+    pDiv.appendChild(ph);
+
+    for (const w of pWs) {
+      const wSessions = sessions.filter(s => s.workspaceId === w.id);
+      const wDiv = document.createElement('div');
+      wDiv.className = 'workspace';
+
+      const name = w.name || w.branch || w.id.slice(0, 8);
+      wDiv.innerHTML = `
+        <div class="workspace-name" title="${w.id}">${name}</div>
+        <div class="workspace-branch">${w.branch || ''}</div>
+        <div class="terminals"></div>
+      `;
+
+      const termList = wDiv.querySelector('.terminals');
+
+      for (const s of wSessions) {
+        const btn = document.createElement('button');
+        btn.className = `terminal-btn${allSessions[s.terminalId] ? ' active' : ''}`;
+        btn.innerHTML = `<span>⬛ ${s.terminalId.slice(0, 8)}…</span><span class="age">${timeAgo(s.createdAt)}</span>`;
+        btn.onclick = () => attachTerminal(s.terminalId);
+        termList.appendChild(btn);
+      }
+
+      if (w.worktreePath) {
+        const newBtn = document.createElement('button');
+        newBtn.className = 'new-term-btn';
+        newBtn.textContent = '+ New terminal';
+        newBtn.onclick = () => openTerminal(w.id, w.worktreePath);
+        termList.appendChild(newBtn);
+      } else {
+        const np = document.createElement('div');
+        np.className = 'no-path';
+        np.textContent = 'no worktree path';
+        termList.appendChild(np);
+      }
+
+      pDiv.appendChild(wDiv);
+    }
+
+    sidebar.appendChild(pDiv);
+  }
+}
+
+async function openTerminal(workspaceId, worktreePath) {
+  try {
+    const result = await trpcPost('terminal.open', { workspaceId, worktreePath });
+    await attachTerminal(result.terminalId);
+    await refresh();
+  } catch (e) {
+    alert(`Failed to open terminal: ${e.message}`);
+  }
+}
+
+function attachTerminal(terminalId) {
+  // If already open, just switch to it
+  if (allSessions[terminalId]) {
+    activateTab(terminalId);
+    return;
+  }
+
+  document.getElementById('empty-state').style.display = 'none';
+
+  // Create xterm instance
+  const container = document.getElementById('terminal-container');
+  const el = document.createElement('div');
+  el.className = 'xterm-instance';
+  container.appendChild(el);
+
+  const term = new Terminal({
+    theme: { background: '#000000', foreground: '#e0e0e0', cursor: '#e0e0e0' },
+    fontSize: 13,
+    fontFamily: '"JetBrains Mono", "Fira Code", Menlo, monospace',
+    cursorBlink: true,
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(el);
+  fitAddon.fit();
+
+  // Create tab
+  const tabs = document.getElementById('terminal-tabs');
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.id = terminalId;
+  tab.innerHTML = `⬛ ${terminalId.slice(0,8)}… <span class="close" onclick="closeTab('${terminalId}',event)">✕</span>`;
+  tab.onclick = () => activateTab(terminalId);
+  tabs.appendChild(tab);
+
+  // WebSocket connection
+  const ws = new WebSocket(`${wsBase()}/terminal/${terminalId}?token=${encodeURIComponent(cfg.secret)}`);
+
+  ws.onopen = () => {
+    // Send initial size
+    ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'data' || msg.type === 'replay') term.write(msg.data);
+      if (msg.type === 'exit') term.write(`\r\n\x1b[31m[exited: ${msg.exitCode}]\x1b[0m\r\n`);
+    } catch { term.write(e.data); }
+  };
+
+  ws.onclose = () => term.write('\r\n\x1b[33m[disconnected]\x1b[0m\r\n');
+  ws.onerror = () => term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n');
+
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+  });
+
+  term.onResize(({ cols, rows }) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  });
+
+  allSessions[terminalId] = { ws, term, fitAddon, el, tabEl: tab };
+  activateTab(terminalId);
+
+  // Refit on window resize
+  window.addEventListener('resize', () => {
+    if (activeTerminalId === terminalId) fitAddon.fit();
+  });
+}
+
+function activateTab(terminalId) {
+  // Hide all
+  for (const [id, s] of Object.entries(allSessions)) {
+    s.el.classList.remove('active');
+    s.tabEl.classList.remove('active');
+  }
+  activeTerminalId = terminalId;
+  const s = allSessions[terminalId];
+  if (!s) return;
+  s.el.classList.add('active');
+  s.tabEl.classList.add('active');
+  setTimeout(() => s.fitAddon.fit(), 50);
+}
+
+function closeTab(terminalId, e) {
+  e.stopPropagation();
+  const s = allSessions[terminalId];
+  if (!s) return;
+  s.ws.close();
+  s.term.dispose();
+  s.el.remove();
+  s.tabEl.remove();
+  delete allSessions[terminalId];
+  activeTerminalId = null;
+  const remaining = Object.keys(allSessions);
+  if (remaining.length) activateTab(remaining[remaining.length - 1]);
+  else document.getElementById('empty-state').style.display = 'flex';
+}
+</script>
+</body>
+</html>

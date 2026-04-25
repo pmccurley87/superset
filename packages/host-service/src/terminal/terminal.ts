@@ -309,6 +309,8 @@ interface CreateTerminalSessionOptions {
 	initialCommand?: string;
 	/** Hidden sessions are process-internal and should not appear in user pickers. */
 	listed?: boolean;
+	/** Direct worktree path override — bypasses host.db workspace lookup. */
+	worktreePath?: string;
 }
 
 export function createTerminalSessionInternal({
@@ -319,6 +321,7 @@ export function createTerminalSessionInternal({
 	eventBus,
 	initialCommand,
 	listed = true,
+	worktreePath: worktreePathOverride,
 }: CreateTerminalSessionOptions): TerminalSession | { error: string } {
 	const existing = sessions.get(terminalId);
 	if (existing) {
@@ -326,24 +329,33 @@ export function createTerminalSessionInternal({
 		return existing;
 	}
 
-	const workspace = db.query.workspaces
-		.findFirst({ where: eq(workspaces.id, workspaceId) })
-		.sync();
-
-	if (!workspace || !existsSync(workspace.worktreePath)) {
-		return { error: "Workspace worktree not found" };
-	}
-
-	// Derive root path from the workspace's project
+	let cwd: string;
 	let rootPath = "";
-	const project = db.query.projects
-		.findFirst({ where: eq(projects.id, workspace.projectId) })
-		.sync();
-	if (project?.repoPath) {
-		rootPath = project.repoPath;
-	}
 
-	const cwd = workspace.worktreePath;
+	if (worktreePathOverride) {
+		if (!existsSync(worktreePathOverride)) {
+			return { error: "Workspace worktree not found" };
+		}
+		cwd = worktreePathOverride;
+	} else {
+		const workspace = db.query.workspaces
+			.findFirst({ where: eq(workspaces.id, workspaceId) })
+			.sync();
+
+		if (!workspace || !existsSync(workspace.worktreePath)) {
+			return { error: "Workspace worktree not found" };
+		}
+
+		// Derive root path from the workspace's project
+		const project = db.query.projects
+			.findFirst({ where: eq(projects.id, workspace.projectId) })
+			.sync();
+		if (project?.repoPath) {
+			rootPath = project.repoPath;
+		}
+
+		cwd = workspace.worktreePath;
+	}
 
 	// Use the preserved shell snapshot — never live process.env
 	const baseEnv = getTerminalBaseEnv();

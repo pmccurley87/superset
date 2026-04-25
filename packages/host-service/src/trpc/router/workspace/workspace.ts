@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { getDeviceName, getHashedDeviceId } from "@superset/shared/device-info";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
@@ -9,6 +10,35 @@ import { projects, workspaces } from "../../../db/schema";
 import { protectedProcedure, router } from "../../index";
 
 export const workspaceRouter = router({
+	listAll: protectedProcedure.query(() => {
+		const homeDir = process.env.SUPERSET_HOME_DIR;
+		if (!homeDir) return { projects: [], workspaces: [] };
+
+		const localDbPath = join(homeDir, "local.db");
+		if (!existsSync(localDbPath)) return { projects: [], workspaces: [] };
+
+		const db = new Database(localDbPath, { readonly: true });
+		try {
+			const projectRows = db
+				.prepare("SELECT id, name, main_repo_path as repoPath, color FROM projects ORDER BY tab_order ASC")
+				.all() as { id: string; name: string; repoPath: string; color: string }[];
+
+			const workspaceRows = db
+				.prepare(
+					`SELECT w.id, w.project_id as projectId, w.name, w.branch, w.type,
+					        wt.path as worktreePath
+					 FROM workspaces w
+					 LEFT JOIN worktrees wt ON w.worktree_id = wt.id
+					 ORDER BY w.tab_order ASC`,
+				)
+				.all() as { id: string; projectId: string; name: string; branch: string; type: string; worktreePath: string | null }[];
+
+			return { projects: projectRows, workspaces: workspaceRows };
+		} finally {
+			db.close();
+		}
+	}),
+
 	get: protectedProcedure
 		.input(z.object({ id: z.string() }))
 		.query(({ ctx, input }) => {
