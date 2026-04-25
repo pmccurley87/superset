@@ -250,4 +250,35 @@ export const deviceRouter = {
 				.where(eq(v2Hosts.id, input.hostId));
 			return { success: true };
 		}),
+
+	listHosts: protectedProcedure.query(async ({ ctx }) => {
+		const organizationId = ctx.activeOrganizationId;
+		if (!organizationId) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "No active organization selected",
+			});
+		}
+
+		const userId = ctx.session.user.id;
+
+		const rows = await db
+			.select({
+				id: v2Hosts.id,
+				name: v2Hosts.name,
+				machineId: v2Hosts.machineId,
+				isOnline: v2Hosts.isOnline,
+				createdAt: v2Hosts.createdAt,
+			})
+			.from(v2UsersHosts)
+			.innerJoin(v2Hosts, eq(v2UsersHosts.hostId, v2Hosts.id))
+			.where(
+				and(
+					eq(v2UsersHosts.userId, userId),
+					eq(v2UsersHosts.organizationId, organizationId),
+				),
+			);
+
+		return { hosts: rows };
+	}),
 } satisfies TRPCRouterRecord;
