@@ -21,15 +21,18 @@ rsync -az \
   "$LOCAL_DIR/rc-proxy.service" \
   "$SSH_HOST:$REMOTE_DIR/"
 
-echo "==> Installing systemd service..."
+echo "==> Installing user systemd service..."
 ssh "$SSH_HOST" bash <<'REMOTE'
 set -e
-sudo cp ~/superset-app/apps/remote-control/rc-proxy.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable rc-proxy
-sudo systemctl restart rc-proxy
+mkdir -p ~/.config/systemd/user/
+cp ~/superset-app/apps/remote-control/rc-proxy.service ~/.config/systemd/user/rc-proxy.service
+# Fix: user service uses default.target not multi-user.target
+sed -i 's/WantedBy=multi-user.target/WantedBy=default.target/' ~/.config/systemd/user/rc-proxy.service
+systemctl --user daemon-reload
+systemctl --user enable rc-proxy
+systemctl --user restart rc-proxy
 sleep 1
-sudo systemctl status rc-proxy --no-pager
+systemctl --user status rc-proxy --no-pager
 REMOTE
 
 echo ""

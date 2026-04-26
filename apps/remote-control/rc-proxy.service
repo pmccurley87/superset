@@ -13,4 +13,4 @@ Environment=RC_PROXY_PORT=5198
 Environment=SUPERSET_HOME_DIR=/home/patrick/.superset
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
