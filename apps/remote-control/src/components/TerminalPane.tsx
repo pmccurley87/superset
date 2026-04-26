@@ -85,18 +85,14 @@ function connectWs(
 		}
 	};
 
-	ws.onerror = () => {
-		// onclose will fire right after and handle reconnect
+	ws.onerror = (ev) => {
+		console.error("[terminal] ws error", ev);
 	};
 
 	ws.onclose = (ev) => {
+		console.log(`[terminal] ws closed terminalId=${terminalId} code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean} destroyed=${inst.destroyed}`);
 		if (inst.destroyed) return;
-		// code 1000 = normal close (destroyTerminal was called externally), don't reconnect
-		if (ev.code === 1000) {
-			inst.term.writeln("\r\n[Connection closed]");
-			return;
-		}
-		// Unexpected close — reconnect after a short delay
+		// Always reconnect unless we explicitly destroyed this instance
 		setTimeout(() => connectWs(credentials, terminalId, inst, true), 2000);
 	};
 }
@@ -217,7 +213,7 @@ export function destroyTerminal(terminalId: string) {
 	const inst = instances.get(terminalId);
 	if (!inst) return;
 	inst.destroyed = true;
-	inst.ws?.close(1000, "destroyed");
+	inst.ws?.close(4000, "destroyed");
 	inst.term.dispose();
 	instances.delete(terminalId);
 }

@@ -190,7 +190,12 @@ const server = Bun.serve<WsData>({
 			upstream.onclose = (ev) => {
 				console.log(`[ws-proxy] upstream closed path=${terminalPath} code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean}`);
 				clearInterval(ws.data.pingTimer ?? undefined);
-				try { ws.close(); } catch { /* already closed */ }
+				// Forward the upstream close code so the browser can distinguish
+				// normal close (1000) from unexpected drops (anything else).
+				// Clamp to valid range; use 1001 (Going Away) if upstream sent 1000
+				// so the browser reconnect logic knows this wasn't intentional.
+				const code = ev.code === 1000 ? 1001 : (ev.code >= 1000 && ev.code <= 4999 ? ev.code : 1001);
+				try { ws.close(code, ev.reason || "upstream closed"); } catch { /* already closed */ }
 			};
 
 			upstream.onerror = (err) => {
