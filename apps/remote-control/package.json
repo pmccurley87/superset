@@ -9,6 +9,7 @@
 		"preview": "vite preview --port 5199",
 		"typecheck": "tsc --noEmit",
 		"test:e2e": "playwright test",
+		"serve": "bun run server.ts",
 		"clean": "git clean -xdf .cache dist .turbo node_modules"
 	},
 	"dependencies": {

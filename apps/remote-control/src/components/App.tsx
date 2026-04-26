@@ -96,11 +96,30 @@ export function App() {
 		fetchData(credentials);
 	}, [credentials, fetchData]);
 
-	// Auto-fetch on load if credentials look set
+	// Auto-detect proxy mode — if the server returns proxyMode:true, skip credentials
 	useEffect(() => {
-		if (credentials.ip && credentials.secret) {
-			fetchData(credentials);
-		}
+		fetch("/rc/config")
+			.then((r) => r.json())
+			.then((cfg: { proxyMode?: boolean; hostServiceRunning?: boolean }) => {
+				if (cfg.proxyMode) {
+					const c: Credentials = {
+						ip: window.location.hostname,
+						port: window.location.port || "5198",
+						secret: "",
+					};
+					setCredentials(c);
+					saveCredentials(c);
+					fetchData(c);
+				} else if (credentials.ip && credentials.secret) {
+					fetchData(credentials);
+				}
+			})
+			.catch(() => {
+				// Not running behind proxy — fall back to stored credentials
+				if (credentials.ip && credentials.secret) {
+					fetchData(credentials);
+				}
+			});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 

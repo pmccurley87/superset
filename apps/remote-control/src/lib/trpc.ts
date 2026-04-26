@@ -10,7 +10,7 @@ export async function trpc<T>(
 ): Promise<T> {
 	const qs = encodeURIComponent(JSON.stringify({ "0": superJson(input) }));
 	const res = await fetch(`${base}/trpc/${proc}?batch=1&input=${qs}`, {
-		headers: { Authorization: `Bearer ${secret}` },
+		headers: secret ? { Authorization: `Bearer ${secret}` } : {},
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	type BatchResult =
@@ -33,7 +33,7 @@ export async function trpcPost<T>(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			Authorization: `Bearer ${secret}`,
+			...(secret ? { Authorization: `Bearer ${secret}` } : {}),
 		},
 		body: JSON.stringify({ "0": superJson(input) }),
 	});

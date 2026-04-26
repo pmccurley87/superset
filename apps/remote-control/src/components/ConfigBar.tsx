@@ -11,7 +11,8 @@ interface Props {
 }
 
 export function ConfigBar({ credentials, onChange, onConnect, onRefresh, status, statusOk }: Props) {
-	const [expanded, setExpanded] = useState(!credentials.ip);
+	const proxyMode = !credentials.secret;
+	const [expanded, setExpanded] = useState(!credentials.ip && !proxyMode);
 	const set = (key: keyof Credentials) => (e: React.ChangeEvent<HTMLInputElement>) =>
 		onChange({ ...credentials, [key]: e.target.value });
 
@@ -40,24 +41,37 @@ export function ConfigBar({ credentials, onChange, onConnect, onRefresh, status,
 
 				<div style={{ width: 1, height: 16, background: "var(--color-border)" }} />
 
-				{/* Connection address — click to edit */}
-				<button
-					onClick={() => setExpanded(v => !v)}
-					style={{
+				{/* Connection address — click to edit (hidden in proxy mode) */}
+				{proxyMode ? (
+					<span style={{
 						display: "flex", alignItems: "center", gap: 6,
 						padding: "3px 8px", borderRadius: 5,
 						border: "1px solid var(--color-border-subtle)",
-						background: expanded ? "var(--color-surface-2)" : "transparent",
-						color: credentials.ip ? "var(--color-text)" : "var(--color-text-dim)",
-						fontSize: 12, fontFamily: "ui-monospace, monospace", cursor: "pointer",
-						transition: "background 0.15s",
-					}}
-				>
-					<span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
-					{credentials.ip
-						? `${credentials.ip}:${credentials.port}`
-						: "not connected"}
-				</button>
+						color: "var(--color-text-dim)",
+						fontSize: 12, fontFamily: "ui-monospace, monospace",
+					}}>
+						<span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+						proxy
+					</span>
+				) : (
+					<button
+						onClick={() => setExpanded(v => !v)}
+						style={{
+							display: "flex", alignItems: "center", gap: 6,
+							padding: "3px 8px", borderRadius: 5,
+							border: "1px solid var(--color-border-subtle)",
+							background: expanded ? "var(--color-surface-2)" : "transparent",
+							color: credentials.ip ? "var(--color-text)" : "var(--color-text-dim)",
+							fontSize: 12, fontFamily: "ui-monospace, monospace", cursor: "pointer",
+							transition: "background 0.15s",
+						}}
+					>
+						<span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+						{credentials.ip
+							? `${credentials.ip}:${credentials.port}`
+							: "not connected"}
+					</button>
+				)}
 
 				{/* Status text */}
 				<span data-testid="status" style={{ color: "var(--color-text-muted)", fontSize: 11, flex: 1 }}>
@@ -90,8 +104,8 @@ export function ConfigBar({ credentials, onChange, onConnect, onRefresh, status,
 				</button>
 			</div>
 
-			{/* Expandable credentials form */}
-			{expanded && (
+			{/* Expandable credentials form — hidden in proxy mode */}
+			{expanded && !proxyMode && (
 				<div
 					style={{ borderTop: "1px solid var(--color-border-subtle)", padding: "12px 16px", background: "var(--color-bg)" }}
 					className="flex items-center gap-2 flex-wrap"

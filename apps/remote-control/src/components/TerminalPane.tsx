@@ -19,6 +19,14 @@ function buildWsUrl(credentials: Credentials, terminalId: string): string {
 	// Keep the full terminalId including "v1:" prefix — the host-service WebSocket
 	// handler routes on that prefix to reach the V1 terminal-host bridge.
 	const encodedId = encodeURIComponent(terminalId);
+	if (!credentials.secret) {
+		// Proxy mode: server injects auth, use relative-style ws URL
+		const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+		const host = credentials.ip && credentials.port
+			? `${credentials.ip}:${credentials.port}`
+			: window.location.host;
+		return `${proto}//${host}/terminal/${encodedId}`;
+	}
 	return `ws://${credentials.ip}:${credentials.port}/terminal/${encodedId}?token=${credentials.secret}`;
 }
 
