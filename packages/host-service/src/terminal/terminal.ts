@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { NodeWebSocket } from "@hono/node-ws";
+import { attachV1Session } from "./terminal-host-bridge";
 import {
 	createScanState,
 	SHELLS_WITH_READY_MARKER,
@@ -579,6 +580,13 @@ export function registerWorkspaceTerminalRoute({
 						return;
 					}
 
+					// V1 bridge: terminal-host sessions prefixed with "v1:"
+					if (terminalId.startsWith("v1:")) {
+						const v1SessionId = terminalId.slice(3);
+						attachV1Session(v1SessionId, ws, () => {});
+						return;
+					}
+
 					const existing = sessions.get(terminalId);
 					if (!existing) {
 						// Session must be created via tRPC terminal.ensureSession before connecting.
@@ -636,6 +644,17 @@ export function registerWorkspaceTerminalRoute({
 				},
 
 				onMessage: (event, ws) => {
+					// V1 bridge handles its own input via side-channel functions
+					if (terminalId.startsWith("v1:")) {
+						try {
+							const message = JSON.parse(String(event.data)) as TerminalClientMessage;
+							const v1ws = ws as typeof ws & { _v1Write?: (d: string) => void; _v1Resize?: (c: number, r: number) => void };
+							if (message.type === "input") v1ws._v1Write?.(message.data);
+							if (message.type === "resize") v1ws._v1Resize?.(Math.max(20, Math.floor(message.cols)), Math.max(5, Math.floor(message.rows)));
+						} catch {}
+						return;
+					}
+
 					const session = sessions.get(terminalId ?? "");
 					if (!session || !session.sockets.has(ws)) return;
 
@@ -670,11 +689,16 @@ export function registerWorkspaceTerminalRoute({
 				},
 
 				onClose: (_event, ws) => {
+					if (terminalId.startsWith("v1:")) {
+						(ws as typeof ws & { _v1Detach?: () => void })._v1Detach?.();
+						return;
+					}
 					const session = sessions.get(terminalId ?? "");
 					session?.sockets.delete(ws);
 				},
 
 				onError: (_event, ws) => {
+					if (terminalId.startsWith("v1:")) return;
 					const session = sessions.get(terminalId ?? "");
 					session?.sockets.delete(ws);
 				},

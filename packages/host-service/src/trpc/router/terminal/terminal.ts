@@ -9,12 +9,27 @@ import {
 	listTerminalSessions,
 	parseThemeType,
 } from "../../../terminal/terminal";
+import { listV1Sessions } from "../../../terminal/terminal-host-bridge";
 import { protectedProcedure, router } from "../../index";
 
 export const terminalRouter = router({
-	listAll: protectedProcedure.query(() => ({
-		sessions: listTerminalSessions({ includeExited: false }),
-	})),
+	listAll: protectedProcedure.query(async () => {
+		const [v2, v1] = await Promise.all([
+			listTerminalSessions({ includeExited: false }),
+			listV1Sessions(),
+		]);
+		const v1Mapped = v1.map((s) => ({
+			terminalId: `v1:${s.sessionId}`,
+			workspaceId: s.workspaceId,
+			cwd: "",
+			createdAt: s.createdAt,
+			exited: !s.isAlive,
+			exitCode: 0,
+			attached: false,
+			source: "v1" as const,
+		}));
+		return { sessions: [...v2, ...v1Mapped] };
+	}),
 
 	open: protectedProcedure
 		.input(

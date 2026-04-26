@@ -192,7 +192,10 @@ function renderSidebar({ projects, workspaces }, sessions) {
     pDiv.appendChild(ph);
 
     for (const w of pWs) {
-      const wSessions = sessions.filter(s => w.worktreePath && s.cwd === w.worktreePath);
+      const wSessions = sessions.filter(s =>
+        (w.worktreePath && s.cwd && s.cwd === w.worktreePath) ||  // V2: match by path
+        (s.workspaceId && s.workspaceId === w.id)                   // V1: match by workspace ID
+      );
       wSessions.forEach(s => matchedSessionIds.add(s.terminalId));
 
       const wDiv = document.createElement('div');
@@ -210,7 +213,9 @@ function renderSidebar({ projects, workspaces }, sessions) {
       for (const s of wSessions) {
         const btn = document.createElement('button');
         btn.className = `terminal-btn${allSessions[s.terminalId] ? ' active' : ''}`;
-        btn.innerHTML = `<span>⬛ ${s.terminalId.slice(0, 8)}…</span><span class="age">${timeAgo(s.createdAt)}</span>`;
+        const isV1 = s.terminalId.startsWith('v1:');
+        const label = isV1 ? '🖥 desktop' : `⬛ ${s.terminalId.slice(0, 8)}…`;
+        btn.innerHTML = `<span>${label}</span><span class="age">${timeAgo(s.createdAt)}</span>`;
         btn.onclick = () => attachTerminal(s.terminalId);
         termList.appendChild(btn);
       }
