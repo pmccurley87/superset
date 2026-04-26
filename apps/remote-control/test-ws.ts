@@ -105,13 +105,17 @@ ws.onclose = (ev) => {
 	process.exit(ev.code === 1000 ? 0 : 1);
 };
 
-// Send a keepalive every 5s so we can see if the server echoes anything
-const pingInterval = setInterval(() => {
+const noHeartbeat = process.argv.includes("--no-heartbeat");
+
+// Optionally send a keepalive every 5s
+const pingInterval = noHeartbeat ? null : setInterval(() => {
 	if (ws.readyState === WebSocket.OPEN) {
 		log("→ sending resize heartbeat");
 		ws.send(JSON.stringify({ type: "resize", cols: 220, rows: 50 }));
 	}
 }, 5000);
+
+if (noHeartbeat) log("Mode: idle (no heartbeat) — mimicking browser after initial resize");
 
 // Auto-close after test duration
 const testTimer = setTimeout(() => {

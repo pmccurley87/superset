@@ -157,7 +157,7 @@ const server = Bun.serve<WsData>({
 	},
 
 	websocket: {
-		idleTimeout: 0, // disable Bun's built-in idle timeout — we manage keepalive ourselves
+		idleTimeout: 120, // 120s — explicit, since 0 may mean "use default" not "disable"
 
 		open(ws) {
 			const { manifest, terminalPath } = ws.data;
@@ -171,12 +171,15 @@ const server = Bun.serve<WsData>({
 				for (const msg of ws.data.queue) upstream.send(msg as string);
 				ws.data.queue = [];
 
-				// Ping upstream every 20s so NAT/host-service don't drop the idle connection
+				// Protocol-level PING to browser every 15s (keeps NAT/mobile connections alive).
+				// ws.ping() sends a WebSocket PING frame; browsers respond with PONG automatically.
 				ws.data.pingTimer = setInterval(() => {
+					try { ws.ping(); } catch { /* browser may have closed */ }
+					// Also keep upstream alive with an application-level resize echo
 					if (upstream.readyState === WebSocket.OPEN) {
 						upstream.send(JSON.stringify({ type: "ping" }));
 					}
-				}, 20_000);
+				}, 15_000);
 			};
 
 			upstream.onmessage = (ev) => {
