@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Superset Remote Control</title>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/lib/xterm.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.css">
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.8.0/lib/addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d0d0d; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
@@ -86,7 +86,7 @@ let allSessions = {};  // terminalId -> { ws, term, fitAddon, el, tabEl }
 let activeTerminalId = null;
 
 // Always use DEFAULTS — port/secret change on every host-service restart
-const DEFAULTS = { ip: '100.68.9.36', port: '45731', secret: '5100b2745c02a7beb6423856f86b1ca33d0c118abf5be206a38623704afa312c' };
+const DEFAULTS = { ip: '100.68.9.36', port: '45731', secret: 'f369bfe4ee2439cecc22f3290daa6b1478f8485525a538c2120f14ded44b5bed' };
 window.onload = () => {
   localStorage.removeItem('rc-cfg');
   document.getElementById('hostIp').value = DEFAULTS.ip;
@@ -210,13 +210,13 @@ function renderSidebar({ projects, workspaces }, sessions) {
         termList.appendChild(btn);
       }
 
-      if (w.worktreePath) {
+      if (w.worktreePath && wSessions.length === 0) {
         const newBtn = document.createElement('button');
         newBtn.className = 'new-term-btn';
         newBtn.textContent = '+ New terminal';
         newBtn.onclick = () => openTerminal(w.worktreePath);
         termList.appendChild(newBtn);
-      } else {
+      } else if (!w.worktreePath) {
         const np = document.createElement('div');
         np.className = 'no-path';
         np.textContent = 'no worktree path';
@@ -247,6 +247,11 @@ function attachTerminal(terminalId) {
     return;
   }
 
+  if (typeof Terminal === 'undefined') {
+    alert('xterm.js failed to load from CDN. Check your internet connection and reload.');
+    return;
+  }
+
   document.getElementById('empty-state').style.display = 'none';
 
   // Create xterm instance
@@ -255,13 +260,21 @@ function attachTerminal(terminalId) {
   el.className = 'xterm-instance';
   container.appendChild(el);
 
-  const term = new Terminal({
-    theme: { background: '#000000', foreground: '#e0e0e0', cursor: '#e0e0e0' },
-    fontSize: 13,
-    fontFamily: '"JetBrains Mono", "Fira Code", Menlo, monospace',
-    cursorBlink: true,
-  });
-  const fitAddon = new FitAddon.FitAddon();
+  let term, fitAddon;
+  try {
+    term = new Terminal({
+      theme: { background: '#000000', foreground: '#e0e0e0', cursor: '#e0e0e0' },
+      fontSize: 13,
+      fontFamily: '"JetBrains Mono", "Fira Code", Menlo, monospace',
+      cursorBlink: true,
+    });
+    fitAddon = new FitAddon.FitAddon();
+  } catch (e) {
+    el.remove();
+    alert(`Failed to create terminal: ${e.message}`);
+    return;
+  }
+  const fitAddonRef = fitAddon;
   term.loadAddon(fitAddon);
   term.open(el);
   fitAddon.fit();
@@ -302,12 +315,12 @@ function attachTerminal(terminalId) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
 
-  allSessions[terminalId] = { ws, term, fitAddon, el, tabEl: tab };
+  allSessions[terminalId] = { ws, term, fitAddon: fitAddonRef, el, tabEl: tab };
   activateTab(terminalId);
 
   // Refit on window resize
   window.addEventListener('resize', () => {
-    if (activeTerminalId === terminalId) fitAddon.fit();
+    if (activeTerminalId === terminalId) fitAddonRef.fit();
   });
 }
 
