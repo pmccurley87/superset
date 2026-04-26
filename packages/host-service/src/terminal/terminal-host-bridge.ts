@@ -89,6 +89,7 @@ function doRequest<T>(
 
 async function connectAndAuth(
 	role: "control" | "stream",
+	clientId: string,
 ): Promise<{ sock: Socket; leftover: string }> {
 	const token = readToken();
 	if (!token) throw new Error("terminal-host token not found");
@@ -111,7 +112,7 @@ async function connectAndAuth(
 					{
 						token,
 						protocolVersion: PROTOCOL_VERSION,
-						clientId: `host-service-bridge-${role}`,
+						clientId,
 						role,
 					},
 				);
@@ -130,15 +131,23 @@ export interface V1Session {
 	sessionId: string;
 	workspaceId: string | null;
 	pid: number | null;
-	createdAt: number;
+	createdAt: number; // epoch ms
+	isAlive: boolean;
+}
+
+interface RawV1Session {
+	sessionId: string;
+	workspaceId?: string | null;
+	pid?: number | null;
+	createdAt?: string | number;
 	isAlive: boolean;
 }
 
 export async function listV1Sessions(): Promise<V1Session[]> {
 	if (!isAvailable()) return [];
 	try {
-		const { sock, leftover } = await connectAndAuth("control");
-		const { payload } = await doRequest<{ sessions: V1Session[] }>(
+		const { sock, leftover } = await connectAndAuth("control", "host-service-list");
+		const { payload } = await doRequest<{ sessions: RawV1Session[] }>(
 			sock,
 			"req_list",
 			"listSessions",
@@ -146,7 +155,19 @@ export async function listV1Sessions(): Promise<V1Session[]> {
 			leftover,
 		);
 		sock.destroy();
-		return (payload.sessions ?? []).filter((s) => s.isAlive);
+		return (payload.sessions ?? [])
+			.filter((s) => s.isAlive)
+			.map((s) => ({
+				sessionId: s.sessionId,
+				workspaceId: s.workspaceId ?? null,
+				pid: s.pid ?? null,
+				createdAt: s.createdAt
+					? typeof s.createdAt === "string"
+						? new Date(s.createdAt).getTime()
+						: s.createdAt
+					: Date.now(),
+				isAlive: s.isAlive,
+			}));
 	} catch {
 		return [];
 	}
@@ -158,6 +179,12 @@ interface BridgeWs {
 	send: (data: string) => void;
 	readyState: number;
 }
+
+type BridgeWsExtended = BridgeWs & {
+	_v1Write?: (d: string) => void;
+	_v1Resize?: (c: number, r: number) => void;
+	_v1Detach?: () => void;
+};
 
 const WS_OPEN = 1;
 
@@ -174,6 +201,8 @@ export function attachV1Session(
 		return;
 	}
 
+	// Both sockets MUST share the same clientId so terminal-host links them
+	const clientId = `host-service-bridge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	let closed = false;
 	let controlSock: Socket | null = null;
 	let streamSock: Socket | null = null;
@@ -187,7 +216,6 @@ export function attachV1Session(
 		onDetach();
 	};
 
-	// Helper: send a fire-and-forget notification on the control socket
 	const notify = (type: string, payload: unknown) => {
 		if (!controlSock || closed) return;
 		reqCounter++;
@@ -196,8 +224,9 @@ export function attachV1Session(
 		);
 	};
 
-	// Set up stream socket — receives data/exit events
-	connectAndAuth("stream")
+	// Connect stream socket first so terminal-host can link it to the client
+	// before we call createOrAttach on the control socket.
+	connectAndAuth("stream", clientId)
 		.then(({ sock, leftover }) => {
 			streamSock = sock;
 			sock.on("error", close);
@@ -205,7 +234,7 @@ export function attachV1Session(
 
 			let buf = leftover;
 
-			const process = () => {
+			const processStream = () => {
 				let nl: number;
 				while ((nl = buf.indexOf("\n")) !== -1) {
 					const line = buf.slice(0, nl);
@@ -230,28 +259,30 @@ export function attachV1Session(
 							close();
 						}
 					} catch {
-						// ignore
+						// ignore malformed lines
 					}
 				}
 			};
 
-			process(); // flush anything that arrived with the auth response
+			processStream();
 			sock.on("data", (chunk: Buffer) => {
 				buf += chunk.toString();
-				process();
+				processStream();
 			});
-		})
-		.catch(close);
 
-	// Set up control socket — createOrAttach then handle write/resize
-	connectAndAuth("control")
+			// Stream is ready — now open the control socket and attach
+			return connectAndAuth("control", clientId);
+		})
 		.then(async ({ sock, leftover }) => {
+			if (closed) { sock.destroy(); return; }
 			controlSock = sock;
 			sock.on("error", close);
 			sock.on("close", close);
 
 			reqCounter++;
 			const { payload: attachPayload } = await doRequest<{
+				snapshotAnsi?: string;
+				rehydrateSequences?: string;
 				snapshot?: { snapshotAnsi?: string; rehydrateSequences?: string };
 			}>(
 				sock,
@@ -261,27 +292,25 @@ export function attachV1Session(
 				leftover,
 			);
 
-			// Send the full terminal snapshot as replay so client sees current state
-			const snap = attachPayload.snapshot;
+			// Send snapshot as replay — terminal-host may nest it or return at top level
+			const snap = attachPayload.snapshot ?? attachPayload;
 			if (snap && ws.readyState === WS_OPEN) {
 				const replay = (snap.rehydrateSequences ?? "") + (snap.snapshotAnsi ?? "");
 				if (replay) ws.send(JSON.stringify({ type: "replay", data: replay }));
 			}
 
-			// Ignore remaining control responses (we use notify for writes)
 			sock.on("data", () => {});
 		})
 		.catch(close);
 
-	// Expose write/resize/detach so the WS handler can call them
-	// We attach them directly to the ws object as side-channel (simpler than returning)
-	(ws as BridgeWs & { _v1Write?: (d: string) => void; _v1Resize?: (c: number, r: number) => void; _v1Detach?: () => void })._v1Write = (data: string) => {
+	// Expose write/resize/detach as side-channel properties on the ws object
+	(ws as BridgeWsExtended)._v1Write = (data: string) => {
 		notify("write", { sessionId, data });
 	};
-	(ws as BridgeWs & { _v1Resize?: (c: number, r: number) => void })._v1Resize = (cols: number, rows: number) => {
+	(ws as BridgeWsExtended)._v1Resize = (cols: number, rows: number) => {
 		notify("resize", { sessionId, cols, rows });
 	};
-	(ws as BridgeWs & { _v1Detach?: () => void })._v1Detach = () => {
+	(ws as BridgeWsExtended)._v1Detach = () => {
 		notify("detach", { sessionId });
 		close();
 	};
