@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { Credentials } from "../lib/types";
@@ -20,7 +20,7 @@ function buildWsUrl(credentials: Credentials, terminalId: string): string {
 	// handler routes on that prefix to reach the V1 terminal-host bridge.
 	const encodedId = encodeURIComponent(terminalId);
 	if (!credentials.secret) {
-		// Proxy mode: server injects auth, use relative-style ws URL
+		// Proxy mode: server injects auth, use same-origin ws URL
 		const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const host = credentials.ip && credentials.port
 			? `${credentials.ip}:${credentials.port}`
@@ -39,19 +39,19 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 		if (!instances.has(terminalId)) {
 			const term = new Terminal({
 				theme: {
-				background: "#111318",
-				foreground: "#e8eaf0",
-				cursor: "#6b8fd4",
-				selectionBackground: "#2a3a5c",
-				black: "#1a1d26", brightBlack: "#3a3f52",
-				red: "#e06c75",   brightRed: "#f47d85",
-				green: "#98c379", brightGreen: "#a8d38a",
-				yellow: "#e5c07b", brightYellow: "#f0cc8a",
-				blue: "#61afef",  brightBlue: "#7abfff",
-				magenta: "#c678dd", brightMagenta: "#d688ed",
-				cyan: "#56b6c2",  brightCyan: "#66c6d2",
-				white: "#abb2bf", brightWhite: "#e8eaf0",
-			},
+					background: "#111318",
+					foreground: "#e8eaf0",
+					cursor: "#6b8fd4",
+					selectionBackground: "#2a3a5c",
+					black: "#1a1d26", brightBlack: "#3a3f52",
+					red: "#e06c75",   brightRed: "#f47d85",
+					green: "#98c379", brightGreen: "#a8d38a",
+					yellow: "#e5c07b", brightYellow: "#f0cc8a",
+					blue: "#61afef",  brightBlue: "#7abfff",
+					magenta: "#c678dd", brightMagenta: "#d688ed",
+					cyan: "#56b6c2",  brightCyan: "#66c6d2",
+					white: "#abb2bf", brightWhite: "#e8eaf0",
+				},
 				fontFamily: "monospace",
 				fontSize: 13,
 				cursorBlink: true,
@@ -59,10 +59,20 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 			const fit = new FitAddon();
 			term.loadAddon(fit);
 			term.open(containerRef.current);
-			fit.fit();
+
+			// Initial fit with rAF to let layout settle before measuring
+			requestAnimationFrame(() => { fit.fit(); });
 
 			const wsUrl = buildWsUrl(credentials, terminalId);
 			const ws = new WebSocket(wsUrl);
+
+			// On connect: fit and tell the server the correct PTY dimensions.
+			// The initial fit.fit() above might run before WS is open, so we
+			// always send the authoritative size once the connection is ready.
+			ws.onopen = () => {
+				fit.fit();
+				ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+			};
 
 			ws.onmessage = (ev) => {
 				try {
@@ -75,7 +85,6 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 						term.writeln(`\r\n[Error: ${msg.message}]`);
 					}
 				} catch {
-					// raw text fallback
 					term.write(ev.data as string);
 				}
 			};
@@ -92,13 +101,7 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 			const resizeObserver = new ResizeObserver(() => {
 				fit.fit();
 				if (ws.readyState === WebSocket.OPEN) {
-					ws.send(
-						JSON.stringify({
-							type: "resize",
-							cols: term.cols,
-							rows: term.rows,
-						}),
-					);
+					ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
 				}
 			});
 			resizeObserver.observe(containerRef.current);
@@ -120,7 +123,6 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 		if (!visible) return;
 		const inst = instances.get(terminalId);
 		if (!inst) return;
-		// Use rAF so the DOM has fully painted with display:flex before measuring
 		const id = requestAnimationFrame(() => {
 			inst.fit.fit();
 			if (inst.ws.readyState === WebSocket.OPEN) {
@@ -130,17 +132,24 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 		return () => cancelAnimationFrame(id);
 	}, [visible, terminalId]);
 
-	// Absolute fill so xterm gets a concrete pixel box; the parent must be position:relative.
+	// Tap the terminal to focus xterm's hidden textarea → shows mobile keyboard
+	const handleClick = useCallback(() => {
+		const inst = instances.get(terminalId);
+		inst?.term.textarea?.focus();
+	}, [terminalId]);
+
 	return (
 		<div
 			data-testid="terminal-pane"
 			data-terminal-id={terminalId}
 			ref={containerRef}
+			onClick={handleClick}
 			style={{
 				position: "absolute", inset: 0,
 				background: "#0d0f14",
 				display: visible ? "block" : "none",
 				padding: 6,
+				cursor: "text",
 			}}
 		/>
 	);
