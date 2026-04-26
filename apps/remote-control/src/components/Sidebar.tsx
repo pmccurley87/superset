@@ -15,9 +15,10 @@ interface Props {
 	activeTerminalId: string | null;
 	onOpenSession: (terminalId: string) => void;
 	onNewTerminal: (worktreePath: string) => void;
+	isMobile?: boolean;
 }
 
-export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOpenSession, onNewTerminal }: Props) {
+export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOpenSession, onNewTerminal, isMobile }: Props) {
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
 	const byProject = new Map<string, Workspace[]>();
@@ -35,13 +36,17 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 			return next;
 		});
 
+	const rowPad = isMobile ? "10px 14px" : "4px 8px";
+	const rowFontSize = isMobile ? 14 : 11;
+	const rowMinHeight = isMobile ? 48 : undefined;
+	const wsPad = isMobile ? "4px 16px 10px 32px" : "2px 12px 6px 26px";
+	const projectPad = isMobile ? "12px 16px 10px" : "9px 12px 7px";
+
 	return (
 		<aside
 			data-testid="sidebar"
 			style={{
-				width: 232, flexShrink: 0, overflowY: "auto",
-				borderRight: "1px solid var(--color-border)",
-				background: "var(--color-surface)",
+				width: "100%", flexShrink: 0,
 				display: "flex", flexDirection: "column",
 			}}
 		>
@@ -68,7 +73,7 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 							onClick={() => toggle(p.id)}
 							style={{
 								display: "flex", alignItems: "center", gap: 7,
-								padding: "9px 12px 7px", width: "100%",
+								padding: projectPad, width: "100%",
 								background: "transparent", border: "none", cursor: "pointer",
 								textAlign: "left",
 							}}
@@ -84,7 +89,7 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 								background: p.color ?? "var(--color-accent)",
 							}} />
 							<span style={{
-								fontSize: 11, fontWeight: 600, letterSpacing: "0.05em",
+								fontSize: isMobile ? 12 : 11, fontWeight: 600, letterSpacing: "0.05em",
 								textTransform: "uppercase", color: "var(--color-text-muted)",
 								flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
 							}}>
@@ -107,19 +112,19 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 							const label = w.name ?? w.branch ?? w.id.slice(0, 8);
 
 							return (
-								<div key={w.id} style={{ padding: "2px 12px 6px 26px" }}>
-									<div style={{ marginBottom: 3 }}>
-										<span style={{ fontSize: 11, color: "var(--color-text-muted)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={label}>
+								<div key={w.id} style={{ padding: wsPad }}>
+									<div style={{ marginBottom: isMobile ? 6 : 3 }}>
+										<span style={{ fontSize: isMobile ? 13 : 11, color: "var(--color-text-muted)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={label}>
 											{label}
 										</span>
 										{w.branch && label !== w.branch && (
-											<span style={{ fontSize: 10, color: "var(--color-text-dim)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+											<span style={{ fontSize: isMobile ? 11 : 10, color: "var(--color-text-dim)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
 												{w.branch}
 											</span>
 										)}
 									</div>
 
-									<div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+									<div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 4 : 2 }}>
 										{wSessions.map((s) => {
 											const isV1 = s.terminalId.startsWith("v1:");
 											const isActive = s.terminalId === activeTerminalId;
@@ -130,12 +135,13 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 													data-testid="session-btn"
 													onClick={() => onOpenSession(s.terminalId)}
 													style={{
-														display: "flex", alignItems: "center", gap: 6,
-														padding: "4px 8px", borderRadius: 5,
+														display: "flex", alignItems: "center", gap: isMobile ? 10 : 6,
+														padding: rowPad, borderRadius: isMobile ? 8 : 5,
+														minHeight: rowMinHeight,
 														border: `1px solid ${isActive ? "var(--color-accent)" : "var(--color-border-subtle)"}`,
 														background: isActive ? "var(--color-accent-dim)" : "transparent",
 														color: isActive ? "var(--color-accent-text)" : "var(--color-text-muted)",
-														fontSize: 11, cursor: "pointer", textAlign: "left", width: "100%",
+														fontSize: rowFontSize, cursor: "pointer", textAlign: "left", width: "100%",
 														transition: "all 0.1s",
 													}}
 													onMouseEnter={e => {
@@ -155,7 +161,7 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 												>
 													{/* Activity dot */}
 													<span style={{
-														width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+														width: isMobile ? 8 : 5, height: isMobile ? 8 : 5, borderRadius: "50%", flexShrink: 0,
 														background: s.exited
 															? "var(--color-text-dim)"
 															: isAttached
@@ -166,7 +172,7 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 													<span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
 														{isV1 ? "desktop" : s.terminalId.slice(0, 8)}
 													</span>
-													<span style={{ fontSize: 9, color: "var(--color-text-dim)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+													<span style={{ fontSize: isMobile ? 11 : 9, color: "var(--color-text-dim)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
 														{timeAgo(s.createdAt)}
 													</span>
 												</button>
@@ -179,10 +185,11 @@ export function Sidebar({ projects, workspaces, sessions, activeTerminalId, onOp
 												onClick={() => onNewTerminal(w.worktreePath!)}
 												style={{
 													display: "flex", alignItems: "center", gap: 5,
-													padding: "3px 8px", borderRadius: 5,
+													padding: rowPad, borderRadius: isMobile ? 8 : 5,
+													minHeight: rowMinHeight,
 													border: "1px dashed var(--color-border-subtle)",
 													background: "transparent", color: "var(--color-text-dim)",
-													fontSize: 11, cursor: "pointer", textAlign: "left", width: "100%",
+													fontSize: rowFontSize, cursor: "pointer", textAlign: "left", width: "100%",
 													transition: "all 0.1s",
 												}}
 												onMouseEnter={e => {

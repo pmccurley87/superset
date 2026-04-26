@@ -9,7 +9,6 @@ import type { Credentials, Project, Workspace, Session } from "../lib/types";
 const STORAGE_KEY = "rc:credentials";
 
 function loadCredentials(): Credentials {
-	// Query params from run.sh override stored credentials
 	const params = new URLSearchParams(window.location.search);
 	const fromUrl: Partial<Credentials> = {
 		ip: params.get("rc_host") ?? undefined,
@@ -19,7 +18,6 @@ function loadCredentials(): Credentials {
 	if (fromUrl.ip && fromUrl.port && fromUrl.secret) {
 		const c = { ip: fromUrl.ip, port: fromUrl.port, secret: fromUrl.secret };
 		saveCredentials(c);
-		// Strip params from URL without reload
 		window.history.replaceState({}, "", window.location.pathname);
 		return c;
 	}
@@ -40,16 +38,28 @@ function baseUrl(c: Credentials) {
 	return `http://${c.ip}:${c.port}`;
 }
 
+function useIsMobile(breakpoint = 768) {
+	const [v, setV] = useState(() => window.innerWidth < breakpoint);
+	useEffect(() => {
+		const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+		const h = (e: MediaQueryListEvent) => setV(e.matches);
+		mq.addEventListener("change", h);
+		return () => mq.removeEventListener("change", h);
+	}, [breakpoint]);
+	return v;
+}
+
 export function App() {
+	const isMobile = useIsMobile();
+
 	const [credentials, setCredentials] = useState<Credentials>(loadCredentials);
-	const [status, setStatus] = useState("Not connected");
+	const [status, setStatus] = useState("Connecting…");
 	const [statusOk, setStatusOk] = useState<boolean | null>(null);
 
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 	const [sessions, setSessions] = useState<Session[]>([]);
 
-	// Tabs: list of open terminal IDs
 	const [tabs, setTabs] = useState<Array<{ terminalId: string; label: string }>>([]);
 	const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -58,49 +68,40 @@ export function App() {
 		saveCredentials(c);
 	}, []);
 
-	const fetchData = useCallback(
-		async (creds: Credentials) => {
-			if (!creds.ip || !creds.secret) {
-				setStatus("Enter host IP and secret");
-				setStatusOk(false);
-				return;
-			}
-			const base = baseUrl(creds);
-			setStatus("Fetching…");
-			try {
-				// workspace.listAll returns { projects, workspaces } from local.db
-				// terminal.listAll returns { sessions: [...] }
-				const [wsData, termData] = await Promise.all([
-					trpc<{ projects: Project[]; workspaces: Workspace[] }>(base, creds.secret, "workspace.listAll"),
-					trpc<{ sessions: Session[] }>(base, creds.secret, "terminal.listAll"),
-				]);
-				setProjects(wsData.projects);
-				setWorkspaces(wsData.workspaces);
-				const ss = termData.sessions;
-				setSessions(ss);
-				setStatus(`${ss.length} session(s) — ${new Date().toLocaleTimeString()}`);
-				setStatusOk(true);
-			} catch (err) {
-				setStatus(`Failed to fetch! ${(err as Error).message}`);
-				setStatusOk(false);
-			}
-		},
-		[],
-	);
+	const fetchData = useCallback(async (creds: Credentials) => {
+		// Allow empty secret in proxy mode (server injects auth)
+		if (!creds.ip) {
+			setStatus("Enter host IP and secret");
+			setStatusOk(false);
+			return;
+		}
+		const base = baseUrl(creds);
+		setStatus("Fetching…");
+		try {
+			const [wsData, termData] = await Promise.all([
+				trpc<{ projects: Project[]; workspaces: Workspace[] }>(base, creds.secret, "workspace.listAll"),
+				trpc<{ sessions: Session[] }>(base, creds.secret, "terminal.listAll"),
+			]);
+			setProjects(wsData.projects);
+			setWorkspaces(wsData.workspaces);
+			const ss = termData.sessions;
+			setSessions(ss);
+			setStatus(`${ss.length} session(s) — ${new Date().toLocaleTimeString()}`);
+			setStatusOk(true);
+		} catch (err) {
+			setStatus(`Failed: ${(err as Error).message}`);
+			setStatusOk(false);
+		}
+	}, []);
 
-	const handleConnect = useCallback(() => {
-		fetchData(credentials);
-	}, [credentials, fetchData]);
+	const handleConnect = useCallback(() => { fetchData(credentials); }, [credentials, fetchData]);
+	const handleRefresh = useCallback(() => { fetchData(credentials); }, [credentials, fetchData]);
 
-	const handleRefresh = useCallback(() => {
-		fetchData(credentials);
-	}, [credentials, fetchData]);
-
-	// Auto-detect proxy mode — if the server returns proxyMode:true, skip credentials
+	// Auto-detect proxy mode on mount, then auto-fetch
 	useEffect(() => {
 		fetch("/rc/config")
 			.then((r) => r.json())
-			.then((cfg: { proxyMode?: boolean; hostServiceRunning?: boolean }) => {
+			.then((cfg: { proxyMode?: boolean }) => {
 				if (cfg.proxyMode) {
 					const c: Credentials = {
 						ip: window.location.hostname,
@@ -112,12 +113,17 @@ export function App() {
 					fetchData(c);
 				} else if (credentials.ip && credentials.secret) {
 					fetchData(credentials);
+				} else {
+					setStatus("Enter host IP and secret");
+					setStatusOk(false);
 				}
 			})
 			.catch(() => {
-				// Not running behind proxy — fall back to stored credentials
 				if (credentials.ip && credentials.secret) {
 					fetchData(credentials);
+				} else {
+					setStatus("Not connected");
+					setStatusOk(false);
 				}
 			});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,7 +136,6 @@ export function App() {
 				const workspace = session?.workspaceId
 					? workspaces.find((w) => w.id === session.workspaceId)
 					: undefined;
-				// Use workspace name from Superset if available, fall back to cwd basename
 				const wsName = workspace?.name ?? workspace?.branch ?? null;
 				const label = wsName ?? (terminalId.startsWith("v1:") ? "desktop" : terminalId.slice(0, 8));
 				setTabs((prev) => [...prev, { terminalId, label }]);
@@ -146,10 +151,7 @@ export function App() {
 			setStatus("Creating terminal…");
 			try {
 				const result = await trpcPost<{ terminalId: string }>(
-					base,
-					credentials.secret,
-					"terminal.open",
-					{ worktreePath },
+					base, credentials.secret, "terminal.open", { worktreePath },
 				);
 				await fetchData(credentials);
 				handleOpenSession(result.terminalId);
@@ -171,41 +173,89 @@ export function App() {
 		});
 	}, [tabs]);
 
+	const handleBack = useCallback(() => setActiveId(null), []);
+
+	// On mobile: show terminal view when a session is active
+	const inTerminalView = isMobile && !!activeId;
+	const activeTab = tabs.find((t) => t.terminalId === activeId);
+
 	return (
-		<div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: "var(--color-bg)" }}>
-			<ConfigBar
-				credentials={credentials}
-				onChange={handleCredentialsChange}
-				onConnect={handleConnect}
-				onRefresh={handleRefresh}
-				status={status}
-				statusOk={statusOk}
-			/>
-			<div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-				<Sidebar
-					projects={projects}
-					workspaces={workspaces}
-					sessions={sessions}
-					activeTerminalId={activeId}
-					onOpenSession={handleOpenSession}
-					onNewTerminal={handleNewTerminal}
+		<div style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden", background: "var(--color-bg)" }}>
+
+			{/* Header — switches to terminal bar on mobile when a session is open */}
+			{inTerminalView ? (
+				<MobileTerminalBar
+					label={activeTab?.label ?? ""}
+					onBack={handleBack}
+					statusOk={statusOk}
 				/>
-				<div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-					<TerminalTabs
-						tabs={tabs}
-						activeId={activeId}
-						onSelect={setActiveId}
-						onClose={handleCloseTab}
+			) : (
+				<ConfigBar
+					credentials={credentials}
+					onChange={handleCredentialsChange}
+					onConnect={handleConnect}
+					onRefresh={handleRefresh}
+					status={status}
+					statusOk={statusOk}
+				/>
+			)}
+
+			{/* Body */}
+			<div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+
+				{/* Sessions panel: full-width on mobile sessions view, sidebar on desktop */}
+				<div style={{
+					width: isMobile ? "100%" : 232,
+					flexShrink: 0,
+					display: inTerminalView ? "none" : "flex",
+					flexDirection: "column",
+					borderRight: isMobile ? "none" : "1px solid var(--color-border)",
+					overflowY: "auto",
+					background: "var(--color-surface)",
+				}}>
+					<Sidebar
+						projects={projects}
+						workspaces={workspaces}
+						sessions={sessions}
+						activeTerminalId={activeId}
+						onOpenSession={handleOpenSession}
+						onNewTerminal={handleNewTerminal}
+						isMobile={isMobile}
 					/>
-					{tabs.length === 0 ? (
-						<div
-							data-testid="empty-state"
-							style={{
-								flex: 1, display: "flex", flexDirection: "column",
-								alignItems: "center", justifyContent: "center", gap: 8,
-								color: "var(--color-text-dim)",
-							}}
-						>
+					{sessions.length === 0 && statusOk && (
+						<div style={{
+							flex: 1, display: "flex", flexDirection: "column",
+							alignItems: "center", justifyContent: "center", gap: 6,
+							color: "var(--color-text-dim)",
+						}}>
+							<span style={{ fontSize: 24, opacity: 0.3 }}>⬛</span>
+							<span style={{ fontSize: 13 }}>No active sessions</span>
+						</div>
+					)}
+				</div>
+
+				{/* Terminal panel: hidden on mobile sessions view, full-screen on mobile terminal view */}
+				<div style={{
+					flex: 1,
+					minWidth: 0,
+					display: (!isMobile || inTerminalView) ? "flex" : "none",
+					flexDirection: "column",
+				}}>
+					{!isMobile && (
+						<TerminalTabs
+							tabs={tabs}
+							activeId={activeId}
+							onSelect={setActiveId}
+							onClose={handleCloseTab}
+						/>
+					)}
+
+					{tabs.length === 0 && !isMobile ? (
+						<div style={{
+							flex: 1, display: "flex", flexDirection: "column",
+							alignItems: "center", justifyContent: "center", gap: 8,
+							color: "var(--color-text-dim)",
+						}}>
 							<span style={{ fontSize: 28, opacity: 0.3 }}>⬛</span>
 							<span style={{ fontSize: 12 }}>Select a session to open a terminal</span>
 						</div>
@@ -223,6 +273,54 @@ export function App() {
 					)}
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function MobileTerminalBar({ label, onBack, statusOk }: {
+	label: string;
+	onBack: () => void;
+	statusOk: boolean | null;
+}) {
+	const dotColor =
+		statusOk === true ? "var(--color-green)" :
+		statusOk === false ? "var(--color-red, #e06c75)" :
+		"var(--color-text-dim)";
+
+	return (
+		<div style={{
+			height: 52, flexShrink: 0,
+			display: "flex", alignItems: "center",
+			padding: "0 12px", gap: 10,
+			background: "var(--color-surface)",
+			borderBottom: "1px solid var(--color-border)",
+		}}>
+			<button
+				onClick={onBack}
+				style={{
+					display: "flex", alignItems: "center", gap: 4,
+					padding: "6px 12px", borderRadius: 7,
+					border: "1px solid var(--color-border-subtle)",
+					background: "transparent",
+					color: "var(--color-text-muted)",
+					fontSize: 13, cursor: "pointer", flexShrink: 0,
+					fontFamily: "inherit",
+				}}
+			>
+				← Sessions
+			</button>
+			<span style={{
+				flex: 1, textAlign: "center",
+				fontSize: 14, fontWeight: 500,
+				color: "var(--color-text)",
+				overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+			}}>
+				{label}
+			</span>
+			<span style={{
+				width: 8, height: 8, borderRadius: "50%",
+				background: dotColor, flexShrink: 0,
+			}} />
 		</div>
 	);
 }
