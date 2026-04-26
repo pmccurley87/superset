@@ -171,6 +171,9 @@ function renderSidebar({ projects, workspaces }, sessions) {
     byProject[w.projectId].push(w);
   }
 
+  // Track which sessions have been matched to a workspace
+  const matchedSessionIds = new Set();
+
   const sidebar = document.getElementById('sidebar');
   const header = sidebar.firstElementChild;
   sidebar.innerHTML = '';
@@ -190,6 +193,8 @@ function renderSidebar({ projects, workspaces }, sessions) {
 
     for (const w of pWs) {
       const wSessions = sessions.filter(s => w.worktreePath && s.cwd === w.worktreePath);
+      wSessions.forEach(s => matchedSessionIds.add(s.terminalId));
+
       const wDiv = document.createElement('div');
       wDiv.className = 'workspace';
 
@@ -227,6 +232,26 @@ function renderSidebar({ projects, workspaces }, sessions) {
     }
 
     sidebar.appendChild(pDiv);
+  }
+
+  // Show any sessions not matched to a known workspace
+  const orphans = sessions.filter(s => !matchedSessionIds.has(s.terminalId));
+  if (orphans.length) {
+    const oDiv = document.createElement('div');
+    oDiv.className = 'project';
+    oDiv.innerHTML = `<div class="project-header"><span class="project-dot" style="background:#6b7280"></span>Other sessions</div>`;
+    const termList = document.createElement('div');
+    termList.style.cssText = 'padding:6px 12px 6px 28px';
+    for (const s of orphans) {
+      const btn = document.createElement('button');
+      btn.className = `terminal-btn${allSessions[s.terminalId] ? ' active' : ''}`;
+      const shortPath = s.cwd.split('/').slice(-2).join('/');
+      btn.innerHTML = `<span title="${s.cwd}">⬛ ${shortPath}</span><span class="age">${timeAgo(s.createdAt)}</span>`;
+      btn.onclick = () => attachTerminal(s.terminalId);
+      termList.appendChild(btn);
+    }
+    oDiv.appendChild(termList);
+    sidebar.appendChild(oDiv);
   }
 }
 
