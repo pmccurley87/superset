@@ -175,30 +175,28 @@ export async function listV1Sessions(): Promise<V1Session[]> {
 
 // ─── Public: proxy a WebSocket to a V1 session ───────────────────────────────
 
-interface BridgeWs {
-	send: (data: string) => void;
-	readyState: number;
+export interface V1BridgeHandle {
+	write: (data: string) => void;
+	resize: (cols: number, rows: number) => void;
+	detach: () => void;
 }
-
-type BridgeWsExtended = BridgeWs & {
-	_v1Write?: (d: string) => void;
-	_v1Resize?: (c: number, r: number) => void;
-	_v1Detach?: () => void;
-};
 
 const WS_OPEN = 1;
 
+/**
+ * Attach to a V1 terminal-host session and stream its output via sendFn.
+ * Returns a handle with write/resize/detach — store it in a closure variable
+ * shared across onOpen/onMessage/onClose handlers, NOT as a property on ws.
+ */
 export function attachV1Session(
 	sessionId: string,
-	ws: BridgeWs,
+	sendFn: (data: string) => void,
 	onDetach: () => void,
-): void {
+): V1BridgeHandle {
 	if (!isAvailable()) {
-		ws.send(
-			JSON.stringify({ type: "error", message: "terminal-host not available" }),
-		);
+		sendFn(JSON.stringify({ type: "error", message: "terminal-host not available" }));
 		onDetach();
-		return;
+		return { write: () => {}, resize: () => {}, detach: () => {} };
 	}
 
 	// Both sockets MUST share the same clientId so terminal-host links them
@@ -248,14 +246,10 @@ export function attachV1Session(
 						if (msg.type !== "event" || msg.sessionId !== sessionId) continue;
 						const p = msg.payload;
 						if (!p) continue;
-						if (p.type === "data" && ws.readyState === WS_OPEN) {
-							ws.send(JSON.stringify({ type: "data", data: p.data }));
+						if (p.type === "data") {
+							sendFn(JSON.stringify({ type: "data", data: p.data }));
 						} else if (p.type === "exit") {
-							if (ws.readyState === WS_OPEN) {
-								ws.send(
-									JSON.stringify({ type: "exit", exitCode: p.exitCode ?? 0 }),
-								);
-							}
+							sendFn(JSON.stringify({ type: "exit", exitCode: p.exitCode ?? 0 }));
 							close();
 						}
 					} catch {
@@ -294,24 +288,17 @@ export function attachV1Session(
 
 			// Send snapshot as replay — terminal-host may nest it or return at top level
 			const snap = attachPayload.snapshot ?? attachPayload;
-			if (snap && ws.readyState === WS_OPEN) {
-				const replay = (snap.rehydrateSequences ?? "") + (snap.snapshotAnsi ?? "");
-				if (replay) ws.send(JSON.stringify({ type: "replay", data: replay }));
-			}
+			const replay = (snap?.rehydrateSequences ?? "") + (snap?.snapshotAnsi ?? "");
+			if (replay) sendFn(JSON.stringify({ type: "replay", data: replay }));
 
+			// Discard any further data on the control socket (acks for notify calls)
 			sock.on("data", () => {});
 		})
 		.catch(close);
 
-	// Expose write/resize/detach as side-channel properties on the ws object
-	(ws as BridgeWsExtended)._v1Write = (data: string) => {
-		notify("write", { sessionId, data });
-	};
-	(ws as BridgeWsExtended)._v1Resize = (cols: number, rows: number) => {
-		notify("resize", { sessionId, cols, rows });
-	};
-	(ws as BridgeWsExtended)._v1Detach = () => {
-		notify("detach", { sessionId });
-		close();
+	return {
+		write: (data: string) => notify("write", { sessionId, data }),
+		resize: (cols: number, rows: number) => notify("resize", { sessionId, cols, rows }),
+		detach: () => { notify("detach", { sessionId }); close(); },
 	};
 }

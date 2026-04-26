@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { NodeWebSocket } from "@hono/node-ws";
-import { attachV1Session } from "./terminal-host-bridge";
+import { attachV1Session, type V1BridgeHandle } from "./terminal-host-bridge";
 import {
 	createScanState,
 	SHELLS_WITH_READY_MARKER,
@@ -572,6 +572,8 @@ export function registerWorkspaceTerminalRoute({
 		"/terminal/:terminalId",
 		upgradeWebSocket((c) => {
 			const terminalId = c.req.param("terminalId") ?? "";
+			// Shared across onOpen/onMessage/onClose via closure (ws object is re-wrapped each call)
+			let v1Handle: V1BridgeHandle | null = null;
 
 			return {
 				onOpen: (_event, ws) => {
@@ -583,7 +585,11 @@ export function registerWorkspaceTerminalRoute({
 					// V1 bridge: terminal-host sessions prefixed with "v1:"
 					if (terminalId.startsWith("v1:")) {
 						const v1SessionId = terminalId.slice(3);
-						attachV1Session(v1SessionId, ws, () => {});
+						v1Handle = attachV1Session(
+							v1SessionId,
+							(data) => ws.send(data),
+							() => ws.close(),
+						);
 						return;
 					}
 
@@ -643,14 +649,15 @@ export function registerWorkspaceTerminalRoute({
 					}
 				},
 
-				onMessage: (event, ws) => {
-					// V1 bridge handles its own input via side-channel functions
+				onMessage: (event, _ws) => {
 					if (terminalId.startsWith("v1:")) {
 						try {
 							const message = JSON.parse(String(event.data)) as TerminalClientMessage;
-							const v1ws = ws as typeof ws & { _v1Write?: (d: string) => void; _v1Resize?: (c: number, r: number) => void };
-							if (message.type === "input") v1ws._v1Write?.(message.data);
-							if (message.type === "resize") v1ws._v1Resize?.(Math.max(20, Math.floor(message.cols)), Math.max(5, Math.floor(message.rows)));
+							if (message.type === "input") v1Handle?.write(message.data);
+							if (message.type === "resize") v1Handle?.resize(
+								Math.max(20, Math.floor(message.cols)),
+								Math.max(5, Math.floor(message.rows)),
+							);
 						} catch {}
 						return;
 					}
@@ -688,9 +695,10 @@ export function registerWorkspaceTerminalRoute({
 					}
 				},
 
-				onClose: (_event, ws) => {
+				onClose: (_event, _ws) => {
 					if (terminalId.startsWith("v1:")) {
-						(ws as typeof ws & { _v1Detach?: () => void })._v1Detach?.();
+						v1Handle?.detach();
+						v1Handle = null;
 						return;
 					}
 					const session = sessions.get(terminalId ?? "");
@@ -698,7 +706,11 @@ export function registerWorkspaceTerminalRoute({
 				},
 
 				onError: (_event, ws) => {
-					if (terminalId.startsWith("v1:")) return;
+					if (terminalId.startsWith("v1:")) {
+						v1Handle?.detach();
+						v1Handle = null;
+						return;
+					}
 					const session = sessions.get(terminalId ?? "");
 					session?.sockets.delete(ws);
 				},
