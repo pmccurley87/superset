@@ -15,8 +15,6 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createConnection } from "node:net";
 
 const PORT = parseInt(process.env.RC_PROXY_PORT ?? "5198");
 const SUPERSET_HOME = process.env.SUPERSET_HOME_DIR ?? `${process.env.HOME}/.superset`;
@@ -49,19 +47,19 @@ function readManifest(): Manifest | null {
 }
 
 const MIME: Record<string, string> = {
-	".html": "text/html; charset=utf-8",
-	".js":   "application/javascript",
-	".css":  "text/css",
-	".svg":  "image/svg+xml",
-	".json": "application/json",
-	".png":  "image/png",
-	".ico":  "image/x-icon",
-	".woff2":"font/woff2",
-	".woff": "font/woff",
-	".ttf":  "font/ttf",
+	".html":  "text/html; charset=utf-8",
+	".js":    "application/javascript",
+	".css":   "text/css",
+	".svg":   "image/svg+xml",
+	".json":  "application/json",
+	".png":   "image/png",
+	".ico":   "image/x-icon",
+	".woff2": "font/woff2",
+	".woff":  "font/woff",
+	".ttf":   "font/ttf",
 };
 
-function serveStatic(pathname: string, res: ServerResponse) {
+function serveStatic(pathname: string): Response {
 	let filePath = join(DIST_DIR, decodeURIComponent(pathname));
 	// SPA fallback: directories and missing paths → index.html
 	try {
@@ -72,141 +70,140 @@ function serveStatic(pathname: string, res: ServerResponse) {
 	try {
 		const mime = MIME[extname(filePath)] ?? "application/octet-stream";
 		const content = readFileSync(filePath);
-		res.writeHead(200, { "Content-Type": mime, "Cache-Control": "no-cache" });
-		res.end(content);
+		return new Response(content, {
+			headers: { "Content-Type": mime, "Cache-Control": "no-cache" },
+		});
 	} catch {
-		res.writeHead(404);
-		res.end("Not found");
+		return new Response("Not found", { status: 404 });
 	}
 }
 
-async function proxyHttp(req: IncomingMessage, res: ServerResponse, manifest: Manifest) {
-	const upstreamUrl = manifest.endpoint + req.url;
+const CORS = {
+	"Access-Control-Allow-Origin": "*",
+	"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+	"Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
 
-	const chunks: Buffer[] = [];
-	for await (const chunk of req) chunks.push(chunk as Buffer);
-	const body = Buffer.concat(chunks);
-
-	try {
-		const upstream = await fetch(upstreamUrl, {
-			method: req.method,
-			headers: {
-				...(Object.fromEntries(
-					Object.entries(req.headers)
-						.filter(([k]) => k !== "host" && !Array.isArray(k))
-						.map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : (v ?? "")]),
-				)),
-				Authorization: `Bearer ${manifest.authToken}`,
-			},
-			body: body.length > 0 ? body : undefined,
-		});
-
-		const headers: Record<string, string> = {};
-		upstream.headers.forEach((v, k) => { headers[k] = v; });
-		// Allow any Tailscale origin
-		headers["Access-Control-Allow-Origin"] = "*";
-
-		res.writeHead(upstream.status, headers);
-		res.end(Buffer.from(await upstream.arrayBuffer()));
-	} catch (err) {
-		res.writeHead(502);
-		res.end(JSON.stringify({ error: String(err) }));
-	}
+// Per-WebSocket state
+interface WsData {
+	terminalPath: string;   // e.g. "/terminal/v1%3Apane-..."
+	manifest: Manifest;
+	upstream: WebSocket | null;
+	queue: (string | BufferSource)[];
 }
 
-const server = createServer(async (req, res) => {
-	const url = new URL(req.url ?? "/", `http://localhost`);
-	const pathname = url.pathname;
+const server = Bun.serve<WsData>({
+	port: PORT,
+	hostname: "0.0.0.0",
 
-	// Handle CORS preflight
-	if (req.method === "OPTIONS") {
-		res.writeHead(204, {
-			"Access-Control-Allow-Origin": "*",
-			"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type, Authorization",
-		});
-		res.end();
-		return;
-	}
+	async fetch(req, server) {
+		const url = new URL(req.url);
+		const pathname = url.pathname;
 
-	// Proxy config — tells the React app it's running behind this proxy
-	if (pathname === "/rc/config") {
-		const manifest = readManifest();
-		res.writeHead(200, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ proxyMode: true, hostServiceRunning: !!manifest }));
-		return;
-	}
-
-	// Proxy tRPC calls to host-service
-	if (pathname.startsWith("/trpc/")) {
-		const manifest = readManifest();
-		if (!manifest) {
-			res.writeHead(503, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "host-service not running — check manifest" }));
-			return;
+		// CORS preflight
+		if (req.method === "OPTIONS") {
+			return new Response(null, { status: 204, headers: CORS });
 		}
-		await proxyHttp(req, res, manifest);
-		return;
-	}
 
-	// Static file serving (SPA fallback to index.html)
-	serveStatic(pathname, res);
+		// Proxy config — tells the React app it's running behind this proxy
+		if (pathname === "/rc/config") {
+			const manifest = readManifest();
+			return Response.json(
+				{ proxyMode: true, hostServiceRunning: !!manifest },
+				{ headers: CORS },
+			);
+		}
+
+		// Proxy tRPC calls to host-service
+		if (pathname.startsWith("/trpc/")) {
+			const manifest = readManifest();
+			if (!manifest) {
+				return Response.json(
+					{ error: "host-service not running — check manifest" },
+					{ status: 503, headers: CORS },
+				);
+			}
+			const upstream = await fetch(`${manifest.endpoint}${pathname}${url.search}`, {
+				method: req.method,
+				headers: {
+					...Object.fromEntries(
+						[...req.headers.entries()].filter(([k]) => k !== "host"),
+					),
+					Authorization: `Bearer ${manifest.authToken}`,
+				},
+				body: req.body,
+			});
+			const respHeaders = new Headers(upstream.headers);
+			respHeaders.set("Access-Control-Allow-Origin", "*");
+			return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+		}
+
+		// WebSocket upgrade for /terminal/*
+		if (pathname.startsWith("/terminal/")) {
+			const manifest = readManifest();
+			if (!manifest) {
+				return new Response("host-service not running", { status: 503 });
+			}
+			const ok = server.upgrade(req, {
+				data: { terminalPath: pathname, manifest, upstream: null, queue: [] } satisfies WsData,
+			});
+			if (ok) return undefined as unknown as Response;
+			return new Response("WebSocket upgrade failed", { status: 426 });
+		}
+
+		// Static file serving (SPA fallback to index.html)
+		return serveStatic(pathname);
+	},
+
+	websocket: {
+		open(ws) {
+			const { manifest, terminalPath } = ws.data;
+			const ep = new URL(manifest.endpoint);
+			const upstreamUrl = `ws://${ep.hostname}:${ep.port}${terminalPath}?token=${manifest.authToken}`;
+
+			const upstream = new WebSocket(upstreamUrl);
+			ws.data.upstream = upstream;
+
+			upstream.onopen = () => {
+				for (const msg of ws.data.queue) upstream.send(msg as string);
+				ws.data.queue = [];
+			};
+
+			upstream.onmessage = (ev) => {
+				try {
+					ws.send(ev.data as string | ArrayBuffer);
+				} catch {
+					// client already closed
+				}
+			};
+
+			upstream.onclose = () => {
+				try { ws.close(); } catch { /* already closed */ }
+			};
+
+			upstream.onerror = (err) => {
+				console.error("[ws-proxy] upstream error:", err);
+				try { ws.close(); } catch { /* already closed */ }
+			};
+		},
+
+		message(ws, message) {
+			const { upstream, queue } = ws.data;
+			if (!upstream) return;
+			if (upstream.readyState === WebSocket.OPEN) {
+				upstream.send(message as string | ArrayBuffer);
+			} else {
+				queue.push(message as string | ArrayBuffer);
+			}
+		},
+
+		close(ws) {
+			ws.data.upstream?.close();
+		},
+	},
 });
 
-// WebSocket proxy for /terminal/*
-server.on("upgrade", (req, socket, head) => {
-	if (!req.url?.startsWith("/terminal/")) {
-		socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-		socket.destroy();
-		return;
-	}
-
-	const manifest = readManifest();
-	if (!manifest) {
-		socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
-		socket.destroy();
-		return;
-	}
-
-	// Parse host-service endpoint: "http://127.0.0.1:PORT"
-	const endpointUrl = new URL(manifest.endpoint);
-	const upstreamHost = endpointUrl.hostname;
-	const upstreamPort = parseInt(endpointUrl.port);
-
-	// Append the auth token to the upstream path
-	const hasQuery = req.url.includes("?");
-	const upstreamPath = req.url + (hasQuery ? "&" : "?") + `token=${manifest.authToken}`;
-
-	const upstream = createConnection(upstreamPort, upstreamHost);
-
-	upstream.once("connect", () => {
-		const upgradeReq = [
-			`GET ${upstreamPath} HTTP/1.1`,
-			`Host: ${upstreamHost}:${upstreamPort}`,
-			`Upgrade: websocket`,
-			`Connection: Upgrade`,
-			`Sec-WebSocket-Key: ${req.headers["sec-websocket-key"] ?? "dGhlIHNhbXBsZSBub25jZQ=="}`,
-			`Sec-WebSocket-Version: 13`,
-			`\r\n`,
-		].join("\r\n");
-		upstream.write(upgradeReq);
-		if (head.length > 0) upstream.write(head);
-	});
-
-	// Pipe bidirectionally
-	upstream.pipe(socket);
-	socket.pipe(upstream);
-
-	const cleanup = () => { upstream.destroy(); socket.destroy(); };
-	socket.on("error", cleanup);
-	socket.on("close", cleanup);
-	upstream.on("error", cleanup);
-	upstream.on("close", cleanup);
-});
-
-server.listen(PORT, "0.0.0.0", () => {
-	const manifest = readManifest();
-	console.log(`\nRC Proxy running at http://0.0.0.0:${PORT}`);
-	console.log(`Host-service: ${manifest?.endpoint ?? "⚠ not found"}`);
-	console.log(`Manifest dir: ${join(SUPERSET_HOME, "host")}\n`);
-});
+const manifest = readManifest();
+console.log(`\nRC Proxy running at http://0.0.0.0:${PORT}`);
+console.log(`Host-service: ${manifest?.endpoint ?? "⚠ not found"}`);
+console.log(`Manifest dir: ${join(SUPERSET_HOME, "host")}\n`);
