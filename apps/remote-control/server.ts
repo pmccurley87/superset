@@ -187,7 +187,8 @@ const server = Bun.serve<WsData>({
 				}
 			};
 
-			upstream.onclose = () => {
+			upstream.onclose = (ev) => {
+				console.log(`[ws-proxy] upstream closed path=${terminalPath} code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean}`);
 				clearInterval(ws.data.pingTimer ?? undefined);
 				try { ws.close(); } catch { /* already closed */ }
 			};
