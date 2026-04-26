@@ -46,7 +46,8 @@
 		"tooling/*"
 	],
 	"overrides": {
-		"axios": "1.14.0"
+		"axios": "1.14.0",
+		"react-native-webview": "13.16.1"
 	},
 	"trustedDependencies": [
 		"better-sqlite3",
