@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { Credentials } from "../lib/types";
@@ -16,11 +16,8 @@ const instances = new Map<
 >();
 
 function buildWsUrl(credentials: Credentials, terminalId: string): string {
-	// Keep the full terminalId including "v1:" prefix — the host-service WebSocket
-	// handler routes on that prefix to reach the V1 terminal-host bridge.
 	const encodedId = encodeURIComponent(terminalId);
 	if (!credentials.secret) {
-		// Proxy mode: server injects auth, use same-origin ws URL
 		const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const host = credentials.ip && credentials.port
 			? `${credentials.ip}:${credentials.port}`
@@ -30,104 +27,114 @@ function buildWsUrl(credentials: Credentials, terminalId: string): string {
 	return `ws://${credentials.ip}:${credentials.port}/terminal/${encodedId}?token=${credentials.secret}`;
 }
 
+function fitAndResize(fit: FitAddon, ws: WebSocket, term: Terminal) {
+	fit.fit();
+	if (ws.readyState === WebSocket.OPEN) {
+		ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+	}
+}
+
 export function TerminalPane({ terminalId, credentials, visible }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	useEffect(() => {
+	// useLayoutEffect runs synchronously after DOM commit but before paint,
+	// so CSS layout is already computed — fit.fit() gets correct dimensions.
+	useLayoutEffect(() => {
 		if (!containerRef.current) return;
 
-		if (!instances.has(terminalId)) {
-			const term = new Terminal({
-				theme: {
-					background: "#111318",
-					foreground: "#e8eaf0",
-					cursor: "#6b8fd4",
-					selectionBackground: "#2a3a5c",
-					black: "#1a1d26", brightBlack: "#3a3f52",
-					red: "#e06c75",   brightRed: "#f47d85",
-					green: "#98c379", brightGreen: "#a8d38a",
-					yellow: "#e5c07b", brightYellow: "#f0cc8a",
-					blue: "#61afef",  brightBlue: "#7abfff",
-					magenta: "#c678dd", brightMagenta: "#d688ed",
-					cyan: "#56b6c2",  brightCyan: "#66c6d2",
-					white: "#abb2bf", brightWhite: "#e8eaf0",
-				},
-				fontFamily: "monospace",
-				fontSize: 13,
-				cursorBlink: true,
-			});
-			const fit = new FitAddon();
-			term.loadAddon(fit);
-			term.open(containerRef.current);
-
-			// Initial fit with rAF to let layout settle before measuring
-			requestAnimationFrame(() => { fit.fit(); });
-
-			const wsUrl = buildWsUrl(credentials, terminalId);
-			const ws = new WebSocket(wsUrl);
-
-			// On connect: fit and tell the server the correct PTY dimensions.
-			// The initial fit.fit() above might run before WS is open, so we
-			// always send the authoritative size once the connection is ready.
-			ws.onopen = () => {
-				fit.fit();
-				ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-			};
-
-			ws.onmessage = (ev) => {
-				try {
-					const msg = JSON.parse(ev.data as string);
-					if (msg.type === "data" || msg.type === "replay") {
-						term.write(msg.data);
-					} else if (msg.type === "exit") {
-						term.writeln(`\r\n[Process exited with code ${msg.exitCode}]`);
-					} else if (msg.type === "error") {
-						term.writeln(`\r\n[Error: ${msg.message}]`);
-					}
-				} catch {
-					term.write(ev.data as string);
-				}
-			};
-
-			ws.onerror = () => term.writeln("\r\n[WebSocket error]");
-			ws.onclose = () => term.writeln("\r\n[Connection closed]");
-
-			term.onData((data) => {
-				if (ws.readyState === WebSocket.OPEN) {
-					ws.send(JSON.stringify({ type: "input", data }));
-				}
-			});
-
-			const resizeObserver = new ResizeObserver(() => {
-				fit.fit();
-				if (ws.readyState === WebSocket.OPEN) {
-					ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-				}
-			});
-			resizeObserver.observe(containerRef.current);
-
-			instances.set(terminalId, { term, fit, ws });
-		} else {
-			// Terminal already exists — move its DOM element into this container
+		if (instances.has(terminalId)) {
+			// Move existing xterm DOM into this container (tab switch)
 			const { term } = instances.get(terminalId)!;
 			const el = term.element?.parentElement;
 			if (el && el !== containerRef.current) {
 				containerRef.current.appendChild(el);
 			}
+			return;
 		}
+
+		const term = new Terminal({
+			theme: {
+				background: "#111318",
+				foreground: "#e8eaf0",
+				cursor: "#6b8fd4",
+				selectionBackground: "#2a3a5c",
+				black: "#1a1d26", brightBlack: "#3a3f52",
+				red: "#e06c75",   brightRed: "#f47d85",
+				green: "#98c379", brightGreen: "#a8d38a",
+				yellow: "#e5c07b", brightYellow: "#f0cc8a",
+				blue: "#61afef",  brightBlue: "#7abfff",
+				magenta: "#c678dd", brightMagenta: "#d688ed",
+				cyan: "#56b6c2",  brightCyan: "#66c6d2",
+				white: "#abb2bf", brightWhite: "#e8eaf0",
+			},
+			fontFamily: "monospace",
+			fontSize: 13,
+			cursorBlink: true,
+		});
+
+		const fit = new FitAddon();
+		term.loadAddon(fit);
+		term.open(containerRef.current);
+		fit.fit(); // synchronous — layout is computed at this point
+
+		const ws = new WebSocket(buildWsUrl(credentials, terminalId));
+
+		ws.onopen = () => {
+			// Send correct PTY dimensions immediately so server uses them for replay
+			fitAndResize(fit, ws, term);
+
+			// Retry after 300ms — catches cases where layout wasn't fully settled
+			// on mobile (terminal panel transitioning from display:none → flex)
+			setTimeout(() => {
+				if (ws.readyState !== WebSocket.OPEN) return;
+				const prevCols = term.cols;
+				const prevRows = term.rows;
+				fit.fit();
+				if (term.cols !== prevCols || term.rows !== prevRows) {
+					ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+				}
+			}, 300);
+		};
+
+		ws.onmessage = (ev) => {
+			try {
+				const msg = JSON.parse(ev.data as string);
+				if (msg.type === "data" || msg.type === "replay") {
+					term.write(msg.data);
+				} else if (msg.type === "exit") {
+					term.writeln(`\r\n[Process exited with code ${msg.exitCode}]`);
+				} else if (msg.type === "error") {
+					term.writeln(`\r\n[Error: ${msg.message}]`);
+				}
+			} catch {
+				term.write(ev.data as string);
+			}
+		};
+
+		ws.onerror = () => term.writeln("\r\n[WebSocket error]");
+		ws.onclose = () => term.writeln("\r\n[Connection closed]");
+
+		term.onData((data) => {
+			if (ws.readyState === WebSocket.OPEN) {
+				ws.send(JSON.stringify({ type: "input", data }));
+			}
+		});
+
+		const resizeObserver = new ResizeObserver(() => {
+			fitAndResize(fit, ws, term);
+		});
+		resizeObserver.observe(containerRef.current);
+
+		instances.set(terminalId, { term, fit, ws });
 	}, [terminalId, credentials]);
 
-	// Re-fit whenever this pane becomes visible — display:none prevents ResizeObserver
-	// from firing, so the terminal dimensions are stale until we force a fit+resize.
+	// Re-fit when pane becomes visible — display:none blocks ResizeObserver
 	useEffect(() => {
 		if (!visible) return;
 		const inst = instances.get(terminalId);
 		if (!inst) return;
 		const id = requestAnimationFrame(() => {
-			inst.fit.fit();
-			if (inst.ws.readyState === WebSocket.OPEN) {
-				inst.ws.send(JSON.stringify({ type: "resize", cols: inst.term.cols, rows: inst.term.rows }));
-			}
+			fitAndResize(inst.fit, inst.ws, inst.term);
 		});
 		return () => cancelAnimationFrame(id);
 	}, [visible, terminalId]);
@@ -135,7 +142,9 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 	// Tap the terminal to focus xterm's hidden textarea → shows mobile keyboard
 	const handleClick = useCallback(() => {
 		const inst = instances.get(terminalId);
-		inst?.term.textarea?.focus();
+		if (!inst) return;
+		inst.term.focus();
+		inst.term.textarea?.focus();
 	}, [terminalId]);
 
 	return (
