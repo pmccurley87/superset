@@ -116,6 +116,9 @@ async function connectAndAuth(
 						role,
 					},
 				);
+				// Disable the idle timeout now that auth is done — the socket stays
+				// open indefinitely for streaming or awaiting write/resize commands.
+				sock.setTimeout(0);
 				resolve({ sock, leftover });
 			} catch (e) {
 				sock.destroy();
