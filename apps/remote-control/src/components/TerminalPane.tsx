@@ -125,6 +125,28 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 		});
 		resizeObserver.observe(containerRef.current);
 
+		// Touch scroll: translate swipe gestures into xterm scroll calls.
+		// xterm renders to canvas so native touch scroll doesn't work.
+		let touchStartY = 0;
+		let touchLastY = 0;
+		const onTouchStart = (e: TouchEvent) => {
+			touchStartY = e.touches[0].clientY;
+			touchLastY = touchStartY;
+		};
+		const onTouchMove = (e: TouchEvent) => {
+			const y = e.touches[0].clientY;
+			const delta = touchLastY - y;
+			touchLastY = y;
+			// ~17px per line (fontSize 13 * ~1.3 line-height)
+			const lines = delta / 17;
+			if (Math.abs(lines) >= 0.5) {
+				term.scrollLines(Math.round(lines));
+			}
+			e.preventDefault();
+		};
+		containerRef.current.addEventListener("touchstart", onTouchStart, { passive: true });
+		containerRef.current.addEventListener("touchmove", onTouchMove, { passive: false });
+
 		instances.set(terminalId, { term, fit, ws });
 	}, [terminalId, credentials]);
 
