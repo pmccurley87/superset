@@ -90,6 +90,7 @@ interface WsData {
 	manifest: Manifest;
 	upstream: WebSocket | null;
 	queue: (string | BufferSource)[];
+	pingTimer: ReturnType<typeof setInterval> | null;
 }
 
 const server = Bun.serve<WsData>({
@@ -145,7 +146,7 @@ const server = Bun.serve<WsData>({
 				return new Response("host-service not running", { status: 503 });
 			}
 			const ok = server.upgrade(req, {
-				data: { terminalPath: pathname, manifest, upstream: null, queue: [] } satisfies WsData,
+				data: { terminalPath: pathname, manifest, upstream: null, queue: [], pingTimer: null } satisfies WsData,
 			});
 			if (ok) return undefined as unknown as Response;
 			return new Response("WebSocket upgrade failed", { status: 426 });
@@ -156,6 +157,8 @@ const server = Bun.serve<WsData>({
 	},
 
 	websocket: {
+		idleTimeout: 0, // disable Bun's built-in idle timeout — we manage keepalive ourselves
+
 		open(ws) {
 			const { manifest, terminalPath } = ws.data;
 			const ep = new URL(manifest.endpoint);
@@ -167,6 +170,13 @@ const server = Bun.serve<WsData>({
 			upstream.onopen = () => {
 				for (const msg of ws.data.queue) upstream.send(msg as string);
 				ws.data.queue = [];
+
+				// Ping upstream every 20s so NAT/host-service don't drop the idle connection
+				ws.data.pingTimer = setInterval(() => {
+					if (upstream.readyState === WebSocket.OPEN) {
+						upstream.send(JSON.stringify({ type: "ping" }));
+					}
+				}, 20_000);
 			};
 
 			upstream.onmessage = (ev) => {
@@ -178,11 +188,13 @@ const server = Bun.serve<WsData>({
 			};
 
 			upstream.onclose = () => {
+				clearInterval(ws.data.pingTimer ?? undefined);
 				try { ws.close(); } catch { /* already closed */ }
 			};
 
 			upstream.onerror = (err) => {
 				console.error("[ws-proxy] upstream error:", err);
+				clearInterval(ws.data.pingTimer ?? undefined);
 				try { ws.close(); } catch { /* already closed */ }
 			};
 		},
@@ -198,6 +210,7 @@ const server = Bun.serve<WsData>({
 		},
 
 		close(ws) {
+			clearInterval(ws.data.pingTimer ?? undefined);
 			ws.data.upstream?.close();
 		},
 	},
