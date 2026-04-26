@@ -13,7 +13,7 @@
  *         SUPERSET_HOME_DIR (default ~/.superset)
  */
 
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createConnection } from "node:net";
@@ -63,8 +63,10 @@ const MIME: Record<string, string> = {
 
 function serveStatic(pathname: string, res: ServerResponse) {
 	let filePath = join(DIST_DIR, decodeURIComponent(pathname));
-	// SPA fallback: unknown paths → index.html
-	if (!existsSync(filePath) || filePath === DIST_DIR) {
+	// SPA fallback: directories and missing paths → index.html
+	try {
+		if (statSync(filePath).isDirectory()) filePath = join(DIST_DIR, "index.html");
+	} catch {
 		filePath = join(DIST_DIR, "index.html");
 	}
 	try {
