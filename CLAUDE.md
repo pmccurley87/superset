@@ -124,11 +124,30 @@ Electron requires `DISPLAY=:0` and `ELECTRON_RUN_AS_NODE=1` or it segfaults head
 
 ### Deployment workflow
 
+#### host-service changes (packages/host-service or apps/desktop)
 1. Make changes on Mac, commit + push to `patrick` remote (github.com/pmccurley87/superset)
 2. On Linux: `git fetch patrick && git checkout -B feat/mobile-remote-terminal patrick/feat/mobile-remote-terminal`
 3. Rebuild: `cd ~/superset-app/apps/desktop && ~/.bun/bin/bun run compile:app` (~90s)
 4. `pkill -f 'host-service.js' && sleep 2 && [spawn command above]`
 5. Verify: `ss -tlnp | grep 44037`
+
+#### remote-control UI changes (apps/remote-control)
+Patrick tests on Android by hitting the Linux box at `100.68.9.36:5198` — no Mac proxy involved.
+`server.ts` serves `dist/` with `readFileSync` on every request, so no server restart is needed after updating files.
+
+```bash
+# From apps/remote-control on Mac:
+bun run build
+rsync -av dist/ patrick@100.68.9.36:~/superset-app/apps/remote-control/dist/
+```
+
+Then refresh on Android — picks up immediately.
+
+### remote-control docs
+
+Full architecture reference: `apps/remote-control/docs/architecture.md`
+
+Covers: proxy server design, WebSocket lifecycle, xterm scroll proxy (why canvas blocks native scroll and how we work around it), mobile keyboard handling, auto-reconnect, deployment workflow, and E2E test scripts.
 
 ### remote-control.html
 

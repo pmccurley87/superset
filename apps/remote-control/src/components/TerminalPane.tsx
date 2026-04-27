@@ -155,20 +155,57 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 		});
 		resizeObserver.observe(containerRef.current);
 
-		// Touch scroll: translate swipe gestures into xterm scroll calls.
-		// xterm renders to canvas so native touch scroll doesn't work.
-		let touchLastY = 0;
-		const onTouchStart = (e: TouchEvent) => { touchLastY = e.touches[0].clientY; };
-		const onTouchMove = (e: TouchEvent) => {
-			const y = e.touches[0].clientY;
-			const delta = touchLastY - y;
-			touchLastY = y;
-			const lines = delta / 17;
-			if (Math.abs(lines) >= 0.5) term.scrollLines(Math.round(lines));
-			e.preventDefault();
+		// Native-scroll proxy: a transparent overflow-y:scroll div sits on top of xterm's
+		// canvas. The browser drives it with full native momentum/rubber-band physics.
+		// We sync its scrollTop → .xterm-viewport so xterm re-renders the canvas to match.
+		const xtermVp = term.element!.querySelector(".xterm-viewport") as HTMLElement;
+		const scrollArea = xtermVp.querySelector(".xterm-scroll-area") as HTMLElement;
+
+		const proxy = document.createElement("div");
+		proxy.dataset.scrollProxy = "";
+		proxy.style.cssText = "position:absolute;inset:0;z-index:10;overflow-y:scroll;overscroll-behavior:none;scrollbar-width:none;";
+		const proxyInner = document.createElement("div");
+		proxy.appendChild(proxyInner);
+		containerRef.current.appendChild(proxy);
+
+		// syncFromXterm: called when xterm's content height changes (new output).
+		// Updates proxy inner height then syncs proxy position to wherever xterm scrolled.
+		// Uses a short cooldown so the resulting proxy "scroll" event is ignored.
+		let syncCooldown: ReturnType<typeof setTimeout> | null = null;
+		let syncing = false;
+
+		const syncFromXterm = () => {
+			proxyInner.style.height = `${xtermVp.scrollHeight}px`;
+			syncing = true;
+			proxy.scrollTop = xtermVp.scrollTop;
+			if (syncCooldown) clearTimeout(syncCooldown);
+			syncCooldown = setTimeout(() => { syncing = false; }, 50);
 		};
-		containerRef.current.addEventListener("touchstart", onTouchStart, { passive: true });
-		containerRef.current.addEventListener("touchmove", onTouchMove, { passive: false });
+		syncFromXterm();
+
+		// Watch xterm-scroll-area resize — fires after DOM is updated (unlike scroll events)
+		const contentObserver = new ResizeObserver(syncFromXterm);
+		contentObserver.observe(scrollArea);
+
+		// Native scroll on proxy → drive xterm viewport
+		proxy.addEventListener("scroll", () => {
+			if (syncing) return;
+			xtermVp.scrollTop = proxy.scrollTop;
+		}, { passive: true });
+
+		// Tap on proxy (minimal movement) → focus xterm so keyboard appears
+		let tapStartY = 0;
+		let isTap = false;
+		proxy.addEventListener("touchstart", (e) => {
+			tapStartY = e.touches[0]?.clientY ?? 0;
+			isTap = true;
+		}, { passive: true });
+		proxy.addEventListener("touchmove", (e) => {
+			if (Math.abs((e.touches[0]?.clientY ?? tapStartY) - tapStartY) > 8) isTap = false;
+		}, { passive: true });
+		proxy.addEventListener("touchend", () => {
+			if (isTap) { term.focus(); term.textarea?.focus(); }
+		}, { passive: true });
 
 		connectWs(credentials, terminalId, inst);
 	}, [terminalId, credentials]);
@@ -207,6 +244,14 @@ export function TerminalPane({ terminalId, credentials, visible }: Props) {
 			}}
 		/>
 	);
+}
+
+export function sendTerminalInput(terminalId: string, data: string) {
+	const inst = instances.get(terminalId);
+	if (!inst) return;
+	if (inst.ws?.readyState === WebSocket.OPEN) {
+		inst.ws.send(JSON.stringify({ type: "input", data }));
+	}
 }
 
 export function destroyTerminal(terminalId: string) {

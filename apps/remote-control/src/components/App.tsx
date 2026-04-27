@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { ConfigBar } from "./ConfigBar";
 import { Sidebar } from "./Sidebar";
 import { TerminalTabs } from "./TerminalTabs";
-import { TerminalPane, destroyTerminal } from "./TerminalPane";
+import { TerminalPane, destroyTerminal, sendTerminalInput } from "./TerminalPane";
 import { trpc, trpcPost } from "../lib/trpc";
 import type { Credentials, Project, Workspace, Session } from "../lib/types";
 
@@ -49,8 +49,27 @@ function useIsMobile(breakpoint = 768) {
 	return v;
 }
 
+function useVisualViewport() {
+	const [vpHeight, setVpHeight] = useState(() => window.visualViewport?.height ?? window.innerHeight);
+	useEffect(() => {
+		const vp = window.visualViewport;
+		if (!vp) return;
+		const update = () => setVpHeight(vp.height);
+		vp.addEventListener("resize", update);
+		vp.addEventListener("scroll", update);
+		return () => {
+			vp.removeEventListener("resize", update);
+			vp.removeEventListener("scroll", update);
+		};
+	}, []);
+	return vpHeight;
+}
+
 export function App() {
 	const isMobile = useIsMobile();
+	const vpHeight = useVisualViewport();
+	const keyboardHeight = Math.max(0, window.innerHeight - vpHeight);
+	const keyboardVisible = keyboardHeight > 100;
 
 	const [credentials, setCredentials] = useState<Credentials>(loadCredentials);
 	const [status, setStatus] = useState("Connecting…");
@@ -180,7 +199,16 @@ export function App() {
 	const activeTab = tabs.find((t) => t.terminalId === activeId);
 
 	return (
-		<div style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden", background: "var(--color-bg)" }}>
+		<div style={{
+			display: "flex", flexDirection: "column",
+			height: isMobile ? `${vpHeight}px` : "100dvh",
+			overflow: "hidden",
+			background: "var(--color-bg)",
+			position: isMobile ? "fixed" : undefined,
+			top: isMobile ? 0 : undefined,
+			left: isMobile ? 0 : undefined,
+			right: isMobile ? 0 : undefined,
+		}}>
 
 			{/* Header — switches to terminal bar on mobile when a session is open */}
 			{inTerminalView ? (
@@ -271,8 +299,59 @@ export function App() {
 							))}
 						</div>
 					)}
+					{isMobile && inTerminalView && keyboardVisible && activeId && (
+						<MobileControlBar terminalId={activeId} />
+					)}
 				</div>
 			</div>
+		</div>
+	);
+}
+
+const CONTROL_KEYS = [
+	{ label: "↑", data: "\x1b[A" },
+	{ label: "↓", data: "\x1b[B" },
+	{ label: "←", data: "\x1b[D" },
+	{ label: "→", data: "\x1b[C" },
+	{ label: "Esc", data: "\x1b" },
+	{ label: "/", data: "/" },
+] as const;
+
+function MobileControlBar({ terminalId }: { terminalId: string }) {
+	return (
+		<div style={{
+			flexShrink: 0,
+			display: "flex", alignItems: "center",
+			background: "var(--color-surface)",
+			borderTop: "1px solid var(--color-border)",
+			padding: "6px 8px",
+			gap: 6,
+		}}>
+			{CONTROL_KEYS.map(({ label, data }) => (
+				<button
+					key={label}
+					onPointerDown={(e) => {
+						e.preventDefault(); // prevent keyboard dismiss
+						sendTerminalInput(terminalId, data);
+					}}
+					style={{
+						flex: label === "Esc" ? 1.5 : 1,
+						height: 40,
+						display: "flex", alignItems: "center", justifyContent: "center",
+						borderRadius: 7,
+						border: "1px solid var(--color-border)",
+						background: "var(--color-surface-2, var(--color-surface))",
+						color: "var(--color-text-muted)",
+						fontSize: label === "Esc" ? 12 : 16,
+						fontFamily: "inherit",
+						cursor: "pointer",
+						WebkitUserSelect: "none",
+						userSelect: "none",
+					}}
+				>
+					{label}
+				</button>
+			))}
 		</div>
 	);
 }
