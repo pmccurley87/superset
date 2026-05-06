@@ -1,0 +1,16 @@
+[Unit]
+Description=Superset Remote Control Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=patrick
+WorkingDirectory=/home/patrick/superset-app/apps/remote-control
+ExecStart=/home/patrick/.bun/bin/bun run server.ts
+Restart=always
+RestartSec=5
+Environment=RC_PROXY_PORT=5198
+Environment=SUPERSET_HOME_DIR=/home/patrick/.superset
+
+[Install]
+WantedBy=multi-user.target
